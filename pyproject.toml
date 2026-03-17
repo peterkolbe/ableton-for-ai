@@ -1,0 +1,14 @@
+[project]
+name = "ableton-for-ai"
+version = "0.0.1"
+description = "Ableton for AI"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastmcp>=3.1.1",
+    "python-osc>=1.9.3",
+    "librosa>=0.11.0",
+    "matplotlib>=3.10.8",
+    "soundfile>=0.13.1",
+    "numpy>=2.4.3"
+]
