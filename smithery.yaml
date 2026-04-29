@@ -17,8 +17,8 @@ startCommand:
         default: "wav"
   commandFunction: |-
     (config) => ({
-      command: "uv",
-      args: ["--directory", ".", "run", "mcp_server_ableton.py"],
+      command: "uvx",
+      args: ["ableton-for-ai"],
       env: {
         STEMS_SOURCE_DIR: config.stemsSourceDir || "./stems",
         PREFERRED_AUDIO_FORMAT: config.preferredAudioFormat || "wav"
