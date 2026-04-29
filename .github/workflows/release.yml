@@ -62,6 +62,11 @@ jobs:
           sed -i "s/^version = \".*\"/version = \"${{ steps.version.outputs.version }}\"/" pyproject.toml
           cat pyproject.toml | grep "^version"
 
+      - name: Update version in server.json
+        run: |
+          sed -i "s/\"version\": \".*\"/\"version\": \"${{ steps.version.outputs.version }}\"/g" server.json
+          cat server.json | grep "version"
+
       - name: Build package
         run: uv build
 
@@ -69,7 +74,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add pyproject.toml uv.lock
+          git add pyproject.toml server.json uv.lock
           git commit -m "chore: bump version to ${{ steps.version.outputs.version }}"
           git push
 

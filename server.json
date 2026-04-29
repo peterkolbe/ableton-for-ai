@@ -2,17 +2,17 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.peterkolbe/ableton-for-ai",
   "title": "Ableton for AI",
-  "description": "Bridge between Ableton Live and AI models. Inspect tracks, analyze audio (LUFS, spectrograms), and control mixing parameters in real-time via MCP.",
+  "description": "Bridge between Ableton Live and AI. Inspect, analyze audio, and control mixing via MCP.",
   "repository": {
     "url": "https://github.com/peterkolbe/ableton-for-ai",
     "source": "github"
   },
-  "version": "0.1.0",
+  "version": "0.1.2",
   "packages": [
     {
       "registryType": "pypi",
       "identifier": "ableton-for-ai",
-      "version": "0.1.0",
+      "version": "0.1.2",
       "transport": {
         "type": "stdio"
       },

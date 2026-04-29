@@ -327,6 +327,24 @@ uv run ruff check .
 uv run ruff format .
 ```
 
+### Publishing to MCP Registry
+
+To publish a new version to the [official MCP Registry](https://registry.modelcontextprotocol.io/):
+
+```bash
+brew install mcp-publisher
+mcp-publisher login github
+mcp-publisher publish
+```
+
+Verify the publication:
+
+```bash
+curl "https://registry.modelcontextprotocol.io/v0/servers?search=io.github.peterkolbe/ableton-for-ai"
+```
+
+Make sure to update the `version` in both `server.json` and `pyproject.toml` before publishing.
+
 ---
 
 ## ⚠️ Known Limitations & Troubleshooting
