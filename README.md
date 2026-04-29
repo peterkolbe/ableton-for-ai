@@ -9,11 +9,7 @@
 **Ableton for AI** is the bridge between your DAW and AI models. It makes Ableton projects **hearable and visible** to AI models by
 implementing the [Model Context Protocol (MCP)](https://modelcontextprotocol.io) and exporting detailed project data.
 
-## How
-
-This repository provides two main ways to collaborate with AI:
-
-### 1. 🤖 MCP Server (Real-time Interaction)
+## What can it do?
 
 Connect Ableton Live directly to MCP-capable AI clients (like Claude Desktop, Cursor, or Cline). The AI can inspect, analyze, and even modify your project in real-time.
 
@@ -33,91 +29,44 @@ Connect Ableton Live directly to MCP-capable AI clients (like Claude Desktop, Cu
 * `ableton://stems/available/summaries`: Discovery resource for all tracks with available audio summaries.
 * `ableton://stems/available/spectrograms`: Discovery resource for all tracks with available spectrograms.
 
-### 2. 📂 CLI: Analyze & Upload (No MCP required)
-
-This method is ideal for LLMs that don't support MCP directly (like ChatGPT or the Claude Web Interface).
-
-* **What it does:**
-  * Scans your `STEMS_SOURCE_DIR` for audio files matching your tracks.
-  * Runs a parallelized analysis pipeline: LUFS (momentary/short-term), Peak, RMS, stereo correlation.
-  * Generates optimized **spectrograms** (WebP) for each stem.
-* **Workflow:** Run the analysis via CLI, then upload the output files (spectrograms + JSON) to any chatbot for mixing feedback.
-
 ---
 
-## ⚡ Quick Start
+## How do I get started?
 
-### 1. Install AbletonOSC
+### 1. Prepare your environment
+
+#### Install AbletonOSC
 
 This project relies on **AbletonOSC** to communicate with Ableton Live.
 
 - Download and install [AbletonOSC](https://github.com/ideoforms/AbletonOSC).
 - Follow the instructions there to add it as a **Control Surface** in Ableton Live's Link/Tempo/MIDI settings.
 
-### 2. Install `uv`
+#### Install ableton-for-ai
 
-`uv` is an extremely fast Python package installer and resolver.
+##### Option A: uv (Recommended)
 
-- **Homebrew:** `brew install uv`
-- **Shell (macOS / Linux):** `curl -LsSf https://astral.sh/uv/install.sh | sh`
-- **Windows:** `powershell -c "irm https://astral.sh/uv/install.ps1 | iex"`
-
-### 3. Clone & Setup
-
-Clone this repository and sync the dependencies:
+[uv](https://docs.astral.sh/uv/) lets you run the server directly without installing anything globally:
 
 ```bash
-git clone https://github.com/peterkolbe/ableton-for-ai.git
-cd ableton-for-ai
-uv sync
+brew install uv          # macOS (Homebrew)
+# or: curl -LsSf https://astral.sh/uv/install.sh | sh   (macOS/Linux)
+# or: powershell -c "irm https://astral.sh/uv/install.ps1 | iex"  (Windows)
 ```
 
-<details>
-<summary>Alternative: pip (without uv)</summary>
+##### Option B: pip
 
-```bash
-git clone https://github.com/peterkolbe/ableton-for-ai.git
-cd ableton-for-ai
-pip install -e .
-```
-
-Then use `python` instead of `uv run` for all commands below.
-</details>
-
-### 4. Configure `config.py`
-
-Open `config.py` and set the following values:
-
-```python
-# REQUIRED: Set this to the folder where your exported audio stems are located.
-DEFAULT_STEMS_SOURCE_DIR = "/absolute/path/to/your/stems"
-
-# Set this to match the format of your exported stems (default: "wav").
-# Change to "mp3" if your stems are in MP3 format.
-DEFAULT_PREFERRED_AUDIO_FORMAT = "wav"  # wav | mp3
-```
-
-> [!NOTE]
-> Without a valid `DEFAULT_STEMS_SOURCE_DIR`, the audio analysis tools (`analyze_stems`) will not find any files to process.
-
----
-
-## 🚀 Usage
-
-
-### 1. MCP Server (Real-time Interaction)
-
-#### Connect to an MCP Client
-
-To use Ableton Live with an MCP-capable client (like Claude Desktop, Cursor, or Cline), add the server to your configuration.
-
-##### Option A: Via PyPI (Recommended — no cloning required)
+Requires Python 3.11+ ([python.org](https://www.python.org/downloads/) or `brew install python`):
 
 ```bash
 pip install ableton-for-ai
 ```
 
-Then add to your MCP client config:
+### 2. Connect to your Chatbot (MCP Client)
+
+Add the server to your MCP client configuration (e.g. Claude Desktop, Cursor, or Cline).
+
+##### Via uvx (if you installed uv)
 
 ```json
 {
@@ -126,33 +75,30 @@ Then add to your MCP client config:
       "command": "uvx",
       "args": ["ableton-for-ai"],
       "env": {
-        "STEMS_SOURCE_DIR": "/path/to/your/stems"
+        "STEMS_SOURCE_DIR": "/path/to/your/exported/stems"
       }
     }
   }
 }
 ```
 
-##### Option B: From source (after cloning)
+##### Via pip (if you installed with pip)
 
 ```json
 {
   "mcpServers": {
     "ableton-for-ai": {
-      "command": "uv",
-      "args": [
-        "--directory",
-        "/absolute/path/to/ableton-for-ai",
-        "run",
-        "mcp_server_ableton.py"
-      ],
+      "command": "ableton-for-ai",
       "env": {
-        "STEMS_SOURCE_DIR": "/path/to/your/stems"
+        "STEMS_SOURCE_DIR": "/path/to/your/exported/stems"
       }
     }
   }
 }
 ```
+
+> [!NOTE]
+> **`STEMS_SOURCE_DIR`** must point to the folder where your exported audio stems are located. You need to export stems manually from Ableton Live (e.g. via "Export Audio/Video" with individual tracks selected), as there is currently no OSC API for triggering exports. The audio analysis tools (`analyze_stems`) will look for files in this directory.
 
 ##### Where to put this config
 
@@ -162,11 +108,15 @@ Then add to your MCP client config:
 
 **Restart your MCP client** after saving the config.
 
+### 3. Use it
 
-#### Use the MCP Server within your Chatbot
+Once connected, you can ask the AI about your project state. The AI will use the included tools and resources to fetch data directly from Ableton.
 
-Once connected, you can ask the AI about your project state. The AI will use the included tools and resources to fetch data directly from Ableton. For
-example:
+**For audio analysis:** Export your stems from Ableton Live first (e.g. via *File → Export Audio/Video* with individual tracks selected) into your configured `STEMS_SOURCE_DIR`. This step must be done manually, as there is no API for triggering exports.
+
+**For complex tasks (e.g. mix feedback):** Give the chatbot context about your project. A good starting prompt includes genre, goal, and where your exported stems start (beat or locator). See [`agent-templates/mix-engineer.md`](./agent-templates/mix-engineer.md) for a ready-to-use prompt template.
+
+**Example prompts:**
 
 - "What is the current tempo and how many tracks do I have?"
 - "Check the EQ settings on my Lead Synth track."
@@ -174,72 +124,11 @@ example:
 - "Analyze the stems and tell me if there are any frequency clashes."
 - "Show me the spectrogram for the 'Kick' track."
 
-### 2. CLI: Analyze & Upload (No MCP required)
-
-Use this if you want to work with any AI by manually uploading project data and audio analysis.
-
-#### Available CLI Commands
-
-Full audio analysis (summaries + spectrograms + full analysis JSONs):
-
-```bash
-ableton-for-ai-cli analyze_stems
-```
-
-Extract Ableton project metadata only (tracks, devices, parameters):
-
-```bash
-ableton-for-ai-cli extract_ableton_project_data
-```
-
-Full pipeline (audio analysis AND project data extraction):
-
-```bash
-ableton-for-ai-cli analyze_stems_and_extract_ableton_project_data
-```
-
-<details>
-<summary>Alternative: run from source (without installing)</summary>
-
-```bash
-uv run ableton_client.py analyze_stems
-uv run ableton_client.py extract_ableton_project_data
-uv run ableton_client.py analyze_stems_and_extract_ableton_project_data
-```
-</details>
-
-> [!NOTE]
-> The OSC daemon starts automatically — no need to launch it manually.
-
-The results will be stored in the `./out` directory, organized into subfolders:
-
-* `./out/project/`: Contains the Ableton project JSON file.
-* `./out/summaries/`: Contains compressed audio analysis JSONs (optimized for AI).
-* `./out/spectrograms/`: Contains spectrogram WebP images for each stem.
-* `./out/analyses/`: Contains full high-resolution analysis JSONs.
-
-#### Mixing with AI (Manual Example)
-
-1. Drag and drop the files from your `out` folder into the chatbot. This typically includes audio stems, spectrograms (
-   `.webp`), and analysis files (`.json`).
-2. Use a prompt like this:
-
-```markdown
-I have attached several audio analysis files (spectrograms and energy analysis).
-The given files only reflect a part of the project timeline, see below in Part.
-
-Genre: Drum and Bass
-Goal: Improve the clarity of the lead synth and make sure it doesn't clash with the vocals.
-Part: The *.analysis.json and *.spectrogram.webp ONLY reflect the part starting at beat 113.
-
-Please analyze the attached files and provide concrete mixing advice.
-```
-
 ---
 
 ## ⚙️ Configuration
 
-You can customize the server behavior by editing `config.py` or setting environment variables.
+You can customize the server behavior by setting environment variables or editing `config.py` (when running from source).
 
 | Variable                  | Default Value                   | Description                                             |
 |:--------------------------|:--------------------------------|:--------------------------------------------------------|
@@ -297,7 +186,100 @@ idea ~/Library/Preferences/Ableton/Live\ 12.3.6/Options.txt
 
 ---
 
+## 📂 CLI: Analyze & Upload (No MCP required)
+
+This method is ideal for LLMs that don't support MCP directly (like ChatGPT or the Claude Web Interface). It runs the same analysis pipeline locally and exports the results as files you can upload to any chatbot.
+
+### Available Commands
+
+Full audio analysis (summaries + spectrograms + full analysis JSONs):
+
+```bash
+ableton-for-ai-cli analyze_stems
+```
+
+Extract Ableton project metadata only (tracks, devices, parameters):
+
+```bash
+ableton-for-ai-cli extract_ableton_project_data
+```
+
+Full pipeline (audio analysis AND project data extraction):
+
+```bash
+ableton-for-ai-cli analyze_stems_and_extract_ableton_project_data
+```
+
+> [!NOTE]
+> The OSC daemon starts automatically — no need to launch it manually.
+
+### Output
+
+The results will be stored in the `./out` directory, organized into subfolders:
+
+* `./out/project/`: Contains the Ableton project JSON file.
+* `./out/summaries/`: Contains compressed audio analysis JSONs (optimized for AI).
+* `./out/spectrograms/`: Contains spectrogram WebP images for each stem.
+* `./out/analyses/`: Contains full high-resolution analysis JSONs.
+
+### Mixing with AI (Manual Upload)
+
+1. Export your stems from Ableton into your `STEMS_SOURCE_DIR`.
+2. Run `ableton-for-ai-cli analyze_stems` to generate analysis files.
+3. Drag and drop the files from your `out` folder into the chatbot (spectrograms `.webp` + analysis `.json`).
+4. Use a prompt like this:
+
+```markdown
+I have attached several audio analysis files (spectrograms and energy analysis).
+The given files only reflect a part of the project timeline, see below in Part.
+
+Genre: Drum and Bass
+Goal: Improve the clarity of the lead synth and make sure it doesn't clash with the vocals.
+Part: The *.analysis.json and *.spectrogram.webp ONLY reflect the part starting at beat 113.
+
+Please analyze the attached files and provide concrete mixing advice.
+```
+
+---
+
 ## 🛠️ Development & Contributing
+
+### Local Setup (from source)
+
+```bash
+git clone https://github.com/peterkolbe/ableton-for-ai.git
+cd ableton-for-ai
+uv sync
+```
+
+Run the MCP server from source:
+
+```json
+{
+  "mcpServers": {
+    "ableton-for-ai": {
+      "command": "uv",
+      "args": [
+        "--directory",
+        "/absolute/path/to/ableton-for-ai",
+        "run",
+        "mcp_server_ableton.py"
+      ],
+      "env": {
+        "STEMS_SOURCE_DIR": "/path/to/your/stems"
+      }
+    }
+  }
+}
+```
+
+Run CLI commands from source:
+
+```bash
+uv run ableton_client.py analyze_stems
+uv run ableton_client.py extract_ableton_project_data
+uv run ableton_client.py analyze_stems_and_extract_ableton_project_data
+```
 
 ### MCP Inspector (Debugging)
 
