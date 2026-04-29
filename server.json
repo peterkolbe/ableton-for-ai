@@ -1,0 +1,38 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.peterkolbe/ableton-for-ai",
+  "title": "Ableton for AI",
+  "description": "Bridge between Ableton Live and AI models. Inspect tracks, analyze audio (LUFS, spectrograms), and control mixing parameters in real-time via MCP.",
+  "repository": {
+    "url": "https://github.com/peterkolbe/ableton-for-ai",
+    "source": "github"
+  },
+  "version": "0.1.0",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "ableton-for-ai",
+      "version": "0.1.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "description": "Path to the folder containing exported audio stems",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": false,
+          "name": "STEMS_SOURCE_DIR"
+        },
+        {
+          "description": "Audio format of your stems (wav or mp3)",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": false,
+          "name": "PREFERRED_AUDIO_FORMAT"
+        }
+      ]
+    }
+  ]
+}
+

@@ -1,5 +1,7 @@
 # Ableton for AI
 
+<!-- mcp-name: io.github.peterkolbe/ableton-for-ai -->
+
 > [!IMPORTANT]
 > **For AI Agents:** Please read [AGENTS.md](./AGENTS.md) for detailed technical context and protocol specifications before working on this
 > project.
