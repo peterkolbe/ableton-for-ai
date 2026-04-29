@@ -1,14 +1,21 @@
 [project]
 name = "ableton-for-ai"
-version = "0.0.1"
-description = "Ableton for AI"
+version = "0.1.0"
+description = "Bridge between Ableton Live and AI models via MCP — make your DAW hearable and visible to AI."
 readme = "README.md"
+license = "MIT"
 requires-python = ">=3.11"
 dependencies = [
-    "fastmcp>=3.1.1",
-    "python-osc>=1.9.3",
+    "fastmcp>=3.2.4",
+    "python-osc>=1.10.2",
     "librosa>=0.11.0",
-    "matplotlib>=3.10.8",
+    "matplotlib>=3.10.9",
     "soundfile>=0.13.1",
-    "numpy>=2.4.3"
+    "numpy>=2.4.4",
+    "pyloudnorm>=0.2.0"
+]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.15.12",
 ]

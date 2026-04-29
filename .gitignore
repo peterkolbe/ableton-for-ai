@@ -41,3 +41,4 @@ ENV/
 .coverage
 htmlcov/
 out/
+stems/

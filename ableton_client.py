@@ -1,29 +1,34 @@
 import asyncio
 import json
 import os
+import re
 import shutil
 import sys
 import time
 from typing import List, Optional, Dict, Any
 
-import config
+import config_utils as config
 from audio_processor import process_audio_file
+
 
 def log_info(message: str):
     """Prints info messages to stderr."""
-    print(f"[INFO] {message}", file=sys.stderr)
+    print(f"[INFO] {message}", file=sys.stderr, flush=True)
+
 
 def log_debug(message: str):
     """Prints debug messages to stderr if LOG_LEVEL is DEBUG."""
     if config.LOG_LEVEL == "DEBUG":
-        print(f"[DEBUG] {message}", file=sys.stderr)
+        print(f"[DEBUG] {message}", file=sys.stderr, flush=True)
+
 
 def log_error(message: str):
     """Prints error messages to stderr."""
-    print(f"[ERROR] {message}", file=sys.stderr)
+    print(f"[ERROR] {message}", file=sys.stderr, flush=True)
+
 
 class AbletonClient:
-    def __init__(self, host='127.0.0.1', port=65432):
+    def __init__(self, host="127.0.0.1", port=65432):
         self.host = host
         self.port = port
         self.reader = None
@@ -32,7 +37,9 @@ class AbletonClient:
         self.responses = {}  # Store futures keyed by (request_id)
         self.lock = asyncio.Lock()
         self.write_lock = asyncio.Lock()  # Lock for socket write operations
-        self.semaphore = asyncio.Semaphore(20)  # Limit parallel OSC requests
+        self.semaphore = asyncio.Semaphore(
+            50
+        )  # Increased from 10 to mask network latency for many small requests (value_string)
         self._request_id = 0
         self.response_task = None
 
@@ -40,7 +47,9 @@ class AbletonClient:
         """Connect to the OSC daemon via asyncio."""
         if not self.connected:
             try:
-                self.reader, self.writer = await asyncio.open_connection(self.host, self.port)
+                self.reader, self.writer = await asyncio.open_connection(
+                    self.host, self.port
+                )
                 self.connected = True
                 self.response_task = asyncio.create_task(self.start_response_reader())
                 return True
@@ -69,13 +78,13 @@ class AbletonClient:
                         msg, index = decoder.raw_decode(buffer)
                         buffer = buffer[index:].lstrip()
 
-                        resp_id = msg.get('id')
-                        if resp_id is not None and ('result' in msg or 'error' in msg):
+                        resp_id = msg.get("id")
+                        if resp_id is not None and ("result" in msg or "error" in msg):
                             async with self.lock:
                                 fut = self.responses.pop(str(resp_id), None)
                             if fut and not fut.done():
                                 fut.set_result(msg)
-                        elif msg.get('type') == 'osc_response':
+                        elif msg.get("type") == "osc_response":
                             # address = msg.get('address')
                             # args = msg.get('args')
                             # await self.handle_osc_response(address, args)
@@ -94,7 +103,13 @@ class AbletonClient:
         async with self.semaphore:
             if not self.connected:
                 if not await self.connect():
-                    return {'ok': False, 'error': {'code': 'CONNECTION_ERROR', 'message': 'Not connected to daemon'}}
+                    return {
+                        "ok": False,
+                        "error": {
+                            "code": "CONNECTION_ERROR",
+                            "message": "Not connected to daemon",
+                        },
+                    }
 
             async with self.lock:
                 self._request_id += 1
@@ -106,7 +121,7 @@ class AbletonClient:
                 "jsonrpc": "2.0",
                 "id": request_id,
                 "method": method,
-                "params": params
+                "params": params,
             }
 
             try:
@@ -119,31 +134,40 @@ class AbletonClient:
                 except asyncio.TimeoutError:
                     async with self.lock:
                         self.responses.pop(request_id, None)
-                    return {'ok': False, 'error': {'code': 'TIMEOUT', 'message': f'Response timeout for {method}'}}
-
-                if 'error' in msg:
                     return {
-                        'ok': False,
-                        'error': {
-                            'code': msg['error'].get('code'),
-                            'message': msg['error'].get('message')
-                        }
+                        "ok": False,
+                        "error": {
+                            "code": "TIMEOUT",
+                            "message": f"Response timeout for {method}",
+                        },
+                    }
+
+                if "error" in msg:
+                    return {
+                        "ok": False,
+                        "error": {
+                            "code": msg["error"].get("code"),
+                            "message": msg["error"].get("message"),
+                        },
                     }
                 else:
-                    return {
-                        'ok': True,
-                        'data': msg.get('result')
-                    }
+                    return {"ok": True, "data": msg.get("result")}
 
             except Exception as e:
                 self.connected = False
-                return {'ok': False, 'error': {'code': 'EXCEPTION', 'message': str(e)}}
+                return {"ok": False, "error": {"code": "EXCEPTION", "message": str(e)}}
 
     async def send_osc(self, address: str, args: Optional[list] = None) -> dict:
         """Wrapper for sending OSC messages via the daemon."""
         if args is None:
             args = []
-        return await self.send_rpc_request("send_message", {"address": address, "args": args})
+        return await self.send_rpc_request(
+            "send_message", {"address": address, "args": args}
+        )
+
+    async def send_bundle(self, messages: List[Dict[str, Any]]) -> dict:
+        """Wrapper for sending OSC bundles via the daemon."""
+        return await self.send_rpc_request("send_bundle", {"messages": messages})
 
     async def close(self):
         """Close the connection."""
@@ -159,7 +183,7 @@ class AbletonClient:
                 self.writer.close()
                 try:
                     await self.writer.wait_closed()
-                except:
+                except Exception:
                     pass
 
     # --- Business Logic Methods ---
@@ -167,14 +191,15 @@ class AbletonClient:
     async def run_tool(self, tool_name):
         """CLI runner for AbletonClient tools."""
         tools = {
-            "get_track_names": self.get_track_names,
-            "get_song_overview": self.get_song_overview,
-            "get_track_overview": self.get_track_overview,
-            "get_track_devices": self.get_track_devices,
-            "get_device_parameters": self.get_device_parameters,
-            "get_all_mix_relevant_devices": self.get_all_mix_relevant_devices,
-            "snapshot_mix_and_save_as_json": self.snapshot_mix_and_save_as_json,
-            "get_tracks_bulk": self.get_tracks_bulk
+            "analyze_stems_and_extract_ableton_project_data": self.analyze_stems_and_extract_ableton_project_data,
+            "analyze_stems": self.analyze_stems,
+            "summarize_stems": self.summarize_stems,
+            "get_overview": self.get_overview,
+            "extract_ableton_project_data": self.extract_ableton_project_data,
+            "get_tracks": self.get_tracks,
+            "get_track": self.get_track,
+            "get_available_stem_summaries": self.get_available_stem_summaries,
+            "get_available_stem_spectrograms": self.get_available_stem_spectrograms,
         }
 
         if tool_name in tools:
@@ -187,7 +212,12 @@ class AbletonClient:
                 # Note: CLI currently supports only tools without arguments or with defaults
                 result = await tools[tool_name]()
 
-                if tool_name != "snapshot_mix_and_save_as_json":
+                if tool_name not in [
+                    "extract_ableton_project_data",
+                    "analyze_stems_and_extract_ableton_project_data",
+                    "analyze_stems",
+                    "summarize_stems",
+                ]:
                     print(json.dumps(result, indent=2))
             except Exception as e:
                 log_error(f"Tool execution failed: {e}")
@@ -197,60 +227,60 @@ class AbletonClient:
             log_error(f"Unknown tool: {tool_name}")
             log_info(f"Available tools: {', '.join(tools.keys())}")
 
-    def _clear_out_folder(self):
-        """Clears the output folder."""
+    @staticmethod
+    def _clear_out_folder():
+        """
+        Clears the output folders (analyses, summaries, spectrograms),
+        but keeps the 'project' folder and other critical files.
+        """
         out_dir = config.BASE_OUT_DIR
+        project_dir = config.PROJECT_DIR
+
+        # Folders to clear explicitly
+        folders_to_clear = [
+            config.ANALYSES_DIR,
+            config.SUMMARIES_DIR,
+            config.SPECTROGRAMS_DIR,
+            "stems",  # Old folder cleanup
+        ]
+
         try:
             if not os.path.exists(out_dir):
                 os.makedirs(out_dir)
                 return
 
+            for folder_name in folders_to_clear:
+                folder_path = os.path.join(out_dir, folder_name)
+                if os.path.exists(folder_path) and os.path.isdir(folder_path):
+                    log_info(f"Clearing {folder_name} folder...")
+                    shutil.rmtree(folder_path)
+                    os.makedirs(folder_path, exist_ok=True)
+
+            # Also clear files in BASE_OUT_DIR but not project_dir
             for filename in os.listdir(out_dir):
                 file_path = os.path.join(out_dir, filename)
+                if filename == project_dir:
+                    continue
+                if filename in folders_to_clear:
+                    continue
+
                 try:
                     if os.path.isfile(file_path) or os.path.islink(file_path):
                         os.unlink(file_path)
-                    elif os.path.isdir(file_path):
-                        shutil.rmtree(file_path)
                 except Exception as e:
-                    log_error(f"Failed to delete {file_path}: {e}")
+                    log_error(f"Failed to delete file {file_path}: {e}")
+
         except Exception as e:
-            log_error(f"Failed to clear out directory: {e}")
+            log_error(f"Failed during out directory cleanup: {e}")
 
-    def _copy_stems(self):
-        """Copies stems to the output folder."""
-        try:
-            out_dir = config.BASE_OUT_DIR
-            src_dir = config.STEMS_SOURCE_DIR
-            ext = f".{config.PREFERRED_AUDIO_FORMAT.lower()}"
-
-            if not os.path.exists(src_dir):
-                log_debug(f"Source directory for stems not found: {src_dir}")
-                return 0
-
-            count = 0
-            for filename in os.listdir(src_dir):
-                if filename.lower().endswith(ext):
-                    try:
-                        shutil.copy2(os.path.join(src_dir, filename), os.path.join(out_dir, filename))
-                        count += 1
-                    except Exception as e:
-                        log_error(f"Failed to copy {filename}: {e}")
-
-            if count > 0:
-                log_info(f"Copied {count} {config.PREFERRED_AUDIO_FORMAT} stem files to {out_dir}/")
-            return count
-        except Exception as e:
-            log_error(f"Failed to copy stems: {e}")
-            return 0
-
-    def _save_to_out(self, data: dict):
+    @staticmethod
+    def _save_to_out(data: dict):
         """Saves data to the output JSON file."""
         try:
-            if not os.path.exists(config.BASE_OUT_DIR):
-                os.makedirs(config.BASE_OUT_DIR)
-
-            filename = config.get_snapshot_json_path()
+            filename = config.get_project_json_path()
+            out_dir = os.path.dirname(filename)
+            if not os.path.exists(out_dir):
+                os.makedirs(out_dir, exist_ok=True)
 
             with open(filename, "w") as f:
                 json.dump(data, f, indent=2)
@@ -258,108 +288,172 @@ class AbletonClient:
         except Exception as e:
             log_error(f"Failed to save result to file: {e}")
 
-    async def get_track_names(self, index_min: Optional[int] = None, index_max: Optional[int] = None) -> dict:
-        """Gets the names of tracks."""
-        try:
-            args = []
-            if index_min is not None and index_max is not None:
-                args = [index_min, index_max]
-
-            response = await self.send_osc("/live/song/get/track_names", args)
-
-            if response['ok']:
-                data = response['data'].get('data', [])
-                if not data:
-                    return {"ok": True, "data": {"tracks": []}, "description": "No tracks found"}
-                else:
-                    tracks = []
-                    start_idx = index_min if index_min is not None else 0
-                    for i, name in enumerate(data):
-                        tracks.append({"index": start_idx + i, "name": name})
-
-                    return {
-                        "ok": True,
-                        "data": {
-                            "track_count": len(tracks),
-                            "tracks": tracks
-                        },
-                        "description": f"Found {len(tracks)} tracks"
-                    }
-            return response
-        except Exception as e:
-            return {"ok": False, "error": str(e)}
-
-    async def get_song_overview(self) -> dict:
-        """Gets a global overview of the song."""
+    async def get_overview(self) -> dict:
+        """Gets a global overview of the song, including tracks and metadata."""
         try:
             results = {}
-            # Num tracks
+            # 1. Global Metadata
+            # Number of tracks
             resp = await self.send_osc("/live/song/get/num_tracks")
-            if resp['ok']:
-                results['num_tracks'] = resp['data'].get('data', [0])[0]
-
-            # Track names
-            resp = await self.send_osc("/live/song/get/track_names")
-            if resp['ok']:
-                names = resp['data'].get('data', [])
-                results['track_names'] = [{"index": i, "name": name} for i, name in enumerate(names)]
+            num_tracks = 0
+            if resp["ok"]:
+                num_tracks = resp["data"].get("data", [0])[0]
+                results["num_tracks"] = num_tracks
 
             # Tempo
             resp = await self.send_osc("/live/song/get/tempo")
-            if resp['ok']:
-                results['tempo'] = resp['data'].get('data', [0.0])[0]
+            if resp["ok"]:
+                results["tempo"] = resp["data"].get("data", [0.0])[0]
 
             # Song length
             resp = await self.send_osc("/live/song/get/song_length")
-            if resp['ok']:
-                results['song_length'] = resp['data'].get('data', [0.0])[0]
+            if resp["ok"]:
+                results["song_length"] = resp["data"].get("data", [0.0])[0]
+
+            # 2. Tracks Data (Bulk)
+            if num_tracks > 0:
+                properties = [
+                    "name",
+                    "volume",
+                    "panning",
+                    "output_meter_level",
+                    "is_grouped",
+                    "mute",
+                    "solo",
+                    "is_foldable",
+                ]
+                tracks_resp = await self.get_tracks(0, num_tracks, properties)
+                if tracks_resp["ok"]:
+                    results["tracks"] = tracks_resp["data"]
+                else:
+                    # Fallback to names only if bulk fails
+                    log_debug(
+                        "Bulk tracks fetch failed in overview, falling back to names."
+                    )
+                    resp = await self.send_osc("/live/song/get/track_names")
+                    if resp["ok"]:
+                        names = resp["data"].get("data", [])
+                        results["tracks"] = [
+                            {"track_index": i, "name": name}
+                            for i, name in enumerate(names)
+                        ]
+            else:
+                results["tracks"] = []
+
+            # 3. Locators (Cue Points)
+            locators_resp = await self.get_locators()
+            if locators_resp["ok"]:
+                results["locators"] = locators_resp["data"]
 
             return {"ok": True, "data": results}
         except Exception as e:
+            log_error(f"Error in get_overview: {e}")
             return {"ok": False, "error": str(e)}
 
-    async def get_track_overview(self, track_index: int) -> dict:
-        """Gets overview of a single track."""
+    async def get_locators(self) -> dict:
+        """Gets all locators (cue points) from the song."""
         try:
-            results = {"track_index": track_index}
-            properties = [
-                ("name", "/live/track/get/name"),
-                ("volume", "/live/track/get/volume"),
-                ("panning", "/live/track/get/panning"),
-                ("output_meter_level", "/live/track/get/output_meter_level"),
-                ("is_grouped", "/live/track/get/is_grouped"),
-                ("mute", "/live/track/get/mute"),
-                ("solo", "/live/track/get/solo"),
-                ("is_foldable", "/live/track/get/is_foldable")
-            ]
+            # Get locator names and times
+            # AbletonOSC might use /live/song/get/cue_points which returns interleaved list [name1, time1, name2, time2, ...]
+            # or it might use /live/song/get/cue_names and /live/song/get/cue_times.
+            # Based on the logs, /live/song/get/cue_points/name and /live/song/get/cue_points/time failed.
 
-            for key, addr in properties:
-                resp = await self.send_osc(addr, [track_index])
-                if resp['ok']:
-                    data = resp['data'].get('data', [])
-                    if len(data) >= 2:
-                        results[key] = data[1]
-                    elif len(data) == 1:
-                        results[key] = data[0]
+            # Try /live/song/get/cue_points first as it's the most common plural for cue points
+            resp = await self.send_osc("/live/song/get/cue_points")
 
-            return {"ok": True, "data": results}
+            if not resp["ok"]:
+                # Fallback to separate name/time if /live/song/get/cue_points fails or returns nothing useful
+                # (Though the logs showed /name and /time failed, maybe /cue_names exists)
+                names_resp = await self.send_osc("/live/song/get/cue_names")
+                times_resp = await self.send_osc("/live/song/get/cue_times")
+
+                if not names_resp["ok"] or not times_resp["ok"]:
+                    return {
+                        "ok": False,
+                        "error": "Failed to fetch locators from Ableton",
+                    }
+
+                names = names_resp["data"].get("data", [])
+                times = times_resp["data"].get("data", [])
+
+                locators = []
+                for i in range(min(len(names), len(times))):
+                    locators.append(
+                        {"index": i, "name": names[i], "time_beats": times[i]}
+                    )
+                return {"ok": True, "data": locators}
+
+            data = resp["data"].get("data", [])
+            locators = []
+
+            # Parse interleaved data if it's [name, time, name, time...]
+            # Note: Some versions return [count, name, time...]
+            if len(data) > 0:
+                start_idx = 0
+                # If first element is an integer and it matches the number of subsequent pairs, it might be a count
+                if isinstance(data[0], int) and (len(data) - 1) == data[0] * 2:
+                    start_idx = 1
+
+                for i in range(start_idx, len(data), 2):
+                    if i + 1 < len(data):
+                        locators.append(
+                            {
+                                "index": len(locators),
+                                "name": data[i],
+                                "time_beats": data[i + 1],
+                            }
+                        )
+
+            return {"ok": True, "data": locators}
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
     async def get_track_devices(self, track_index: int) -> dict:
-        """Gets devices of a track."""
+        """Gets devices of a track using an OSC bundle."""
         try:
             results = {"track_index": track_index, "devices": []}
-            names_resp = await self.send_osc("/live/track/get/devices/name", [track_index])
-            types_resp = await self.send_osc("/live/track/get/devices/type", [track_index])
-            classes_resp = await self.send_osc("/live/track/get/devices/class_name", [track_index])
+            bundle_msgs = [
+                {"address": "/live/track/get/devices/name", "args": [track_index]},
+                {"address": "/live/track/get/devices/type", "args": [track_index]},
+                {
+                    "address": "/live/track/get/devices/class_name",
+                    "args": [track_index],
+                },
+            ]
 
-            if not names_resp['ok']:
-                return names_resp
+            bundle_resp = await self.send_bundle(bundle_msgs)
+            if not bundle_resp["ok"]:
+                return bundle_resp
 
-            names = names_resp['data'].get('data', [])[1:]
-            types = types_resp['data'].get('data', [])[1:] if types_resp['ok'] else []
-            classes = classes_resp['data'].get('data', [])[1:] if classes_resp['ok'] else []
+            responses = bundle_resp["data"]
+            names_resp = responses[0]
+            types_resp = responses[1]
+            classes_resp = responses[2]
+
+            if not names_resp.get("ok"):
+                return {"ok": False, "error": names_resp.get("error")}
+
+            names_raw = names_resp.get("result", {}).get("data", [])
+            types_raw = (
+                types_resp.get("result", {}).get("data", [])
+                if types_resp.get("ok")
+                else []
+            )
+            classes_raw = (
+                classes_resp.get("result", {}).get("data", [])
+                if classes_resp.get("ok")
+                else []
+            )
+
+            # Handle case where AbletonOSC returns track_index as first element
+            def skip_index(data, idx):
+                if len(data) > 0 and data[0] == idx:
+                    return data[1:]
+                return data
+
+            names = skip_index(names_raw, track_index)
+            types = skip_index(types_raw, track_index)
+            classes = skip_index(classes_raw, track_index)
 
             num_devices = len(names)
             results["num_devices"] = num_devices
@@ -369,7 +463,8 @@ class AbletonClient:
                     "device_index": i,
                     "name": names[i],
                     "type": types[i] if i < len(types) else "Unknown",
-                    "class_name": classes[i] if i < len(classes) else "Unknown"
+                    "class_name": classes[i] if i < len(classes) else "Unknown",
+                    "has_external_side_chain_activated": False,
                 }
                 results["devices"].append(device)
 
@@ -378,210 +473,564 @@ class AbletonClient:
             return {"ok": False, "error": str(e)}
 
     async def get_device_parameters(self, track_index: int, device_index: int) -> dict:
-        """Gets parameters of a device."""
+        """
+        Gets parameters of a device using OSC bundles.
+        """
         try:
             results: Dict[str, Any] = {
                 "track_index": track_index,
                 "device_index": device_index,
-                "parameters": []
+                "parameters": [],
             }
 
-            name_resp = await self.send_osc("/live/device/get/name", [track_index, device_index])
-            class_resp = await self.send_osc("/live/device/get/class_name", [track_index, device_index])
+            bundle_msgs = [
+                {
+                    "address": "/live/device/get/name",
+                    "args": [track_index, device_index],
+                },
+                {
+                    "address": "/live/device/get/class_name",
+                    "args": [track_index, device_index],
+                },
+                {
+                    "address": "/live/device/get/parameters/name",
+                    "args": [track_index, device_index],
+                },
+                {
+                    "address": "/live/device/get/parameters/value",
+                    "args": [track_index, device_index],
+                },
+                {
+                    "address": "/live/device/get/parameters/min",
+                    "args": [track_index, device_index],
+                },
+                {
+                    "address": "/live/device/get/parameters/max",
+                    "args": [track_index, device_index],
+                },
+            ]
 
-            if name_resp['ok']:
-                data = name_resp['data'].get('data', [])
+            bundle_resp = await self.send_bundle(bundle_msgs)
+            if not bundle_resp["ok"]:
+                return bundle_resp
+
+            responses = bundle_resp["data"]
+            name_resp = responses[0]
+            class_resp = responses[1]
+            n_resp = responses[2]
+            v_resp = responses[3]
+            min_resp = responses[4]
+            max_resp = responses[5]
+
+            if name_resp.get("ok"):
+                data = name_resp.get("result", {}).get("data", [])
                 if len(data) >= 3:
                     results["device_name"] = data[2]
 
-            if class_resp['ok']:
-                data = class_resp['data'].get('data', [])
+            if class_resp.get("ok"):
+                data = class_resp.get("result", {}).get("data", [])
                 if len(data) >= 3:
                     results["class_name"] = data[2]
 
-            n_resp = await self.send_osc("/live/device/get/parameters/name", [track_index, device_index])
-            v_resp = await self.send_osc("/live/device/get/parameters/value", [track_index, device_index])
+            if not n_resp.get("ok"):
+                return {"ok": False, "error": n_resp.get("error")}
 
-            if not n_resp['ok']:
-                return n_resp
-            
-            p_names_raw = n_resp.get('data', {}).get('data', [])
-            p_values_raw = v_resp.get('data', {}).get('data', []) if v_resp['ok'] else []
+            p_names_raw = n_resp.get("result", {}).get("data", [])
+            p_values_raw = (
+                v_resp.get("result", {}).get("data", []) if v_resp.get("ok") else []
+            )
+            p_mins_raw = (
+                min_resp.get("result", {}).get("data", []) if min_resp.get("ok") else []
+            )
+            p_maxs_raw = (
+                max_resp.get("result", {}).get("data", []) if max_resp.get("ok") else []
+            )
 
             if len(p_names_raw) > 0:
                 skip = 0
-                if len(p_names_raw) >= 2 and p_names_raw[0] == track_index and p_names_raw[1] == device_index:
+                if (
+                    len(p_names_raw) >= 2
+                    and p_names_raw[0] == track_index
+                    and p_names_raw[1] == device_index
+                ):
                     skip = 2
                 elif len(p_names_raw) >= 1 and p_names_raw[0] == track_index:
                     skip = 1
 
                 p_names = p_names_raw[skip:]
                 p_values = p_values_raw[skip:] if len(p_values_raw) > skip else []
+                p_mins = p_mins_raw[skip:] if len(p_mins_raw) > skip else []
+                p_maxs = p_maxs_raw[skip:] if len(p_maxs_raw) > skip else []
             else:
                 p_names = []
                 p_values = []
+                p_mins = []
+                p_maxs = []
+
+            # Fetch value_strings using an OSC bundle to speed up processing
+            bundle_messages = [
+                {
+                    "address": "/live/device/get/parameter/value_string",
+                    "args": [track_index, device_index, i],
+                }
+                for i in range(len(p_names))
+            ]
+
+            p_value_strings = [None] * len(p_names)
+            if bundle_messages:
+                log_debug(
+                    f"Fetching {len(bundle_messages)} value_strings via OSC bundle..."
+                )
+                # We split into smaller bundles if there are too many parameters to avoid MTU issues
+                # 32 messages per bundle is a safe limit for typical UDP packets
+                chunk_size = 32
+                for j in range(0, len(bundle_messages), chunk_size):
+                    chunk = bundle_messages[j : j + chunk_size]
+                    bundle_resp = await self.send_bundle(chunk)
+
+                    if bundle_resp["ok"]:
+                        # Results are in a list matching the order of messages in the chunk
+                        for k, res_item in enumerate(bundle_resp["data"]):
+                            if res_item.get("ok"):
+                                data = res_item.get("result", {}).get("data", [])
+                                # Response format: (track_index, device_index, parameter_index, value_string)
+                                if len(data) >= 4:
+                                    p_value_strings[j + k] = data[3]
 
             params_list = []
             for i, name in enumerate(p_names):
                 param = {
                     "parameter_index": i,
                     "name": name,
-                    "value": p_values[i] if i < len(p_values) else None
+                    "value": p_values[i] if i < len(p_values) else None,
+                    "value_string": p_value_strings[i]
+                    if i < len(p_value_strings)
+                    else None,
+                    "min": p_mins[i] if i < len(p_mins) else 0.0,
+                    "max": p_maxs[i] if i < len(p_maxs) else 1.0,
                 }
                 params_list.append(param)
 
             results["parameters"] = params_list
             results["num_parameters"] = len(params_list)
 
-            return {"ok": True, "data": results}
-        except Exception as e:
-            return {"ok": False, "error": str(e)}
+            # --- Sidechain Routing (Generic detection from parameters) ---
+            # This is important for VSTs like Pro-Q 4 where LOM doesn't expose the routing object
+            sc_keywords = [
+                "Side Chain On",
+                "Sidechain On",
+                "S/C On",
+                "External Side Chain",
+            ]
+            has_sc_active = any(
+                any(kw.lower() in p["name"].lower() for kw in sc_keywords)
+                and p["value"] is not None
+                and p["value"] > 0.0
+                for p in params_list
+            )
 
-    async def get_all_mix_relevant_devices(self) -> dict:
-        """Gets all mix relevant devices across all tracks."""
-        try:
-            relevant_classes = config.RELEVANT_DEVICE_CLASSES
-            relevant_names = config.RELEVANT_DEVICE_NAMES
-
-            names_resp = await self.send_osc("/live/song/get/track_names")
-            if not names_resp['ok']:
-                return names_resp
-            track_names = names_resp['data'].get('data', [])
-            num_tracks = len(track_names)
-
-            results = []
-
-            for t_idx in range(num_tracks):
-                t_name = track_names[t_idx]
-                track_entry = {"track_index": t_idx, "track_name": t_name, "relevant_devices": []}
-
-                dev_names_resp = await self.send_osc("/live/track/get/devices/name", [t_idx])
-                dev_classes_resp = await self.send_osc("/live/track/get/devices/class_name", [t_idx])
-
-                if dev_names_resp['ok'] and dev_classes_resp['ok']:
-                    dev_names = dev_names_resp['data'].get('data', [])[1:]
-                    dev_classes = dev_classes_resp['data'].get('data', [])[1:]
-
-                    for d_idx, (name, class_name) in enumerate(zip(dev_names, dev_classes)):
-                        is_relevant = class_name in relevant_classes or (
-                            name and any(rn == name or f" {rn}" in name or f"{rn} " in name for rn in relevant_names))
-
-                        if is_relevant:
-                            device_info = {
-                                "device_index": d_idx,
-                                "name": name,
-                                "class_name": class_name
-                            }
-                            params_resp = await self.get_device_parameters(t_idx, d_idx)
-                            if params_resp['ok']:
-                                device_info["parameters"] = params_resp['data'].get("parameters", [])
-
-                            track_entry["relevant_devices"].append(device_info)
-
-                if track_entry["relevant_devices"]:
-                    results.append(track_entry)
+            results["has_external_side_chain_activated"] = has_sc_active
 
             return {"ok": True, "data": results}
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
-    async def get_tracks_bulk(self, index_min: int, index_max: int, properties: List[str]) -> dict:
-        """Bulk request for track properties."""
+    async def get_tracks(
+        self, index_min: int, index_max: int, properties: List[str] = None
+    ) -> dict:
+        """
+        Bulk request for track properties.
+        If 'properties' is None, returns FULL track information (metadata, devices, parameters)
+        for each track in the range. Optimized for performance.
+        """
         try:
             num_tracks = index_max - index_min
+            if num_tracks <= 0:
+                return {"ok": True, "data": []}
+
+            # FULL mode: Get all info for each track in range
+            if properties is None:
+                log_debug(
+                    f"Fetching FULL data for tracks {index_min} to {index_max} in optimized parallel mode..."
+                )
+
+                # 1. Optimized Bulk Meta Fetch for the whole range in ONE OSC call
+                meta_props = [
+                    "name",
+                    "volume",
+                    "panning",
+                    "mute",
+                    "solo",
+                    "is_grouped",
+                    "is_foldable",
+                    "output_meter_level",
+                ]
+                meta_resp = await self.get_tracks(index_min, index_max, meta_props)
+                if not meta_resp["ok"]:
+                    return meta_resp
+
+                tracks_data = meta_resp["data"]
+
+                # 2. Parallel device and parameter fetch for each track
+                async def fetch_devices_and_params(t_data):
+                    t_idx = t_data["track_index"]
+                    # Fetch devices
+                    dev_resp = await self.get_track_devices(t_idx)
+                    if not dev_resp["ok"]:
+                        t_data["devices"] = []
+                        return t_data
+
+                    devices = dev_resp["data"].get("devices", [])
+                    t_data["devices"] = devices
+
+                    # Fetch parameters for all devices in parallel
+                    if devices:
+                        param_tasks = [
+                            self.get_device_parameters(t_idx, i)
+                            for i in range(len(devices))
+                        ]
+                        param_results = await asyncio.gather(*param_tasks)
+                        for i, p_res in enumerate(param_results):
+                            if p_res["ok"]:
+                                devices[i]["parameters"] = p_res["data"].get(
+                                    "parameters", []
+                                )
+                                devices[i]["has_external_side_chain_activated"] = p_res[
+                                    "data"
+                                ].get("has_external_side_chain_activated", False)
+                            else:
+                                devices[i]["parameters"] = []
+                    return t_data
+
+                fetch_tasks = [fetch_devices_and_params(td) for td in tracks_data]
+                final_results = await asyncio.gather(*fetch_tasks)
+                return {"ok": True, "data": final_results}
+
             results = [{"track_index": index_min + i} for i in range(num_tracks)]
 
-            plural_map = {
-                "name": "/live/song/get/track_names",
-            }
+            # volume and panning are MixerDevice properties and NOT supported by track_data bulk API
+            incompatible = {"volume", "panning"}
 
-            tasks = []
-            task_info = []
+            bulk_candidates = [p for p in properties if p not in incompatible]
+            to_fetch_individually = [p for p in properties if p in incompatible]
 
-            for prop in properties:
-                addr = plural_map.get(prop)
-                if addr:
-                    tasks.append(self.send_osc(addr))
-                    task_info.append((None, prop, True))
+            # 1. Fetch bulk properties if any
+            if bulk_candidates:
+                api_props = [f"track.{p}" for p in bulk_candidates]
+                args = [index_min, index_max] + api_props
+
+                log_debug(
+                    f"Sending bulk track_data request for {len(bulk_candidates)} properties..."
+                )
+                resp = await self.send_osc("/live/song/get/track_data", args)
+
+                if resp["ok"]:
+                    data = resp["data"].get("data", [])
+
+                    # Response format: [track_0_p1, track_0_p2, ..., track_1_p1, ...]
+                    # Check for Range Echo (though track_data usually doesn't echo range)
+                    start_idx = 0
+                    if len(data) >= 2 and data[0] == index_min and data[1] == index_max:
+                        start_idx = 2
+
+                    actual_data = data[start_idx:]
+                    expected_total = num_tracks * len(bulk_candidates)
+
+                    if len(actual_data) >= expected_total:
+                        for i in range(num_tracks):
+                            for j, prop in enumerate(bulk_candidates):
+                                val_idx = i * len(bulk_candidates) + j
+                                results[i][prop] = actual_data[val_idx]
+                    else:
+                        log_debug(
+                            f"Bulk data too short ({len(actual_data)} < {expected_total}), falling back."
+                        )
+                        to_fetch_individually.extend(bulk_candidates)
                 else:
+                    log_debug(
+                        f"Bulk request failed: {resp.get('error')}, falling back."
+                    )
+                    to_fetch_individually.extend(bulk_candidates)
+
+            # 2. Fetch individual properties
+            if to_fetch_individually:
+                log_debug(
+                    f"Fetching {len(to_fetch_individually)} properties individually for {num_tracks} tracks..."
+                )
+                individual_resp = await self._get_tracks_fallback(
+                    index_min, index_max, to_fetch_individually
+                )
+                if individual_resp["ok"]:
+                    indiv_data = individual_resp["data"]
                     for i in range(num_tracks):
-                        t_idx = index_min + i
-                        tasks.append(self.send_osc(f"/live/track/get/{prop}", [t_idx]))
-                        task_info.append((i, prop, False))
-
-            if not tasks:
-                return {"ok": True, "data": results}
-
-            responses = await asyncio.gather(*tasks)
-
-            for resp, (idx, prop, is_bulk) in zip(responses, task_info):
-                if not resp['ok']:
-                    continue
-
-                data = resp['data'].get('data', [])
-                if is_bulk:
-                    for i in range(num_tracks):
-                        if i < len(data):
-                            results[i][prop] = data[i]
-                else:
-                    if len(data) >= 2:
-                        results[idx][prop] = data[1]
-                    elif len(data) == 1:
-                        results[idx][prop] = data[0]
+                        for prop in to_fetch_individually:
+                            if prop in indiv_data[i]:
+                                results[i][prop] = indiv_data[i][prop]
 
             return {"ok": True, "data": results}
         except Exception as e:
+            log_error(f"Error in get_tracks: {e}")
             return {"ok": False, "error": str(e)}
 
-    async def _run_audio_analysis_pipeline(self):
-        """Internal audio analysis pipeline."""
-        await asyncio.to_thread(self._copy_stems)
+    async def get_track(self, track_index: int) -> dict:
+        """
+        Gets full track information including metadata, devices and all parameters.
+        Highly optimized with bulk requests and parallel execution.
+        """
+        try:
+            # 1. Fetch Track Metadata (Volume, Panning, Name, etc.)
+            properties = [
+                "name",
+                "volume",
+                "panning",
+                "mute",
+                "solo",
+                "is_grouped",
+                "is_foldable",
+                "output_meter_level",
+            ]
+            meta_resp = await self.get_tracks(
+                track_index, track_index + 1, properties
+            )
 
-        out_dir = config.BASE_OUT_DIR
+            if not meta_resp["ok"] or not meta_resp["data"]:
+                return {
+                    "ok": False,
+                    "error": f"Failed to fetch track metadata: {meta_resp.get('error')}",
+                }
+
+            track_data = meta_resp["data"][0]
+            track_data["track_index"] = track_index
+
+            # 2. Fetch Devices
+            devices_resp = await self.get_track_devices(track_index)
+            if not devices_resp["ok"]:
+                return {
+                    "ok": False,
+                    "error": f"Failed to fetch devices: {devices_resp.get('error')}",
+                }
+
+            devices = devices_resp["data"].get("devices", [])
+            track_data["devices"] = devices
+
+            # 3. Fetch Parameters for all devices in parallel
+            if devices:
+                log_debug(
+                    f"Fetching parameters for {len(devices)} devices in parallel..."
+                )
+                param_tasks = [
+                    self.get_device_parameters(track_index, i)
+                    for i in range(len(devices))
+                ]
+                param_results = await asyncio.gather(*param_tasks)
+
+                for i, p_res in enumerate(param_results):
+                    if p_res["ok"]:
+                        # Merge parameter data into device object
+                        devices[i]["parameters"] = p_res["data"].get("parameters", [])
+                        devices[i]["has_external_side_chain_activated"] = p_res[
+                            "data"
+                        ].get("has_external_side_chain_activated", False)
+                    else:
+                        log_error(
+                            f"Failed to fetch parameters for device {i}: {p_res.get('error')}"
+                        )
+                        devices[i]["parameters"] = []
+
+            return {"ok": True, "data": track_data}
+        except Exception as e:
+            log_error(f"Error in get_track: {e}")
+            return {"ok": False, "error": str(e)}
+
+    async def set_device_parameter(
+        self, track_index: int, device_index: int, parameter_index: int, value: float
+    ) -> dict:
+        """
+        Sets a parameter value for a device.
+        :param track_index: The index of the track.
+        :param device_index: The index of the device on the track.
+        :param parameter_index: The index of the parameter on the device.
+        :param value: The new value for the parameter (usually 0.0 to 1.0).
+        """
+        return await self.send_osc(
+            "/live/device/set/parameter/value",
+            [track_index, device_index, parameter_index, value],
+        )
+
+    async def set_device_parameters(
+        self, track_index: int, device_index: int, values: List[float]
+    ) -> dict:
+        """
+        Sets multiple parameter values for a device in bulk.
+        :param track_index: The index of the track.
+        :param device_index: The index of the device on the track.
+        :param values: A list of new values for the parameters.
+        """
+        return await self.send_osc(
+            "/live/device/set/parameters/value",
+            [track_index, device_index] + list(values),
+        )
+
+    async def set_track_volume(self, track_index: int, value: float) -> dict:
+        """
+        Sets the volume of a track.
+        :param track_index: The index of the track.
+        :param value: The new volume value (0.0 to 1.0).
+        """
+        return await self.send_osc("/live/track/set/volume", [track_index, value])
+
+    async def set_track_panning(self, track_index: int, value: float) -> dict:
+        """
+        Sets the panning of a track.
+        :param track_index: The index of the track.
+        :param value: The new panning value (-1.0 to 1.0).
+        """
+        return await self.send_osc("/live/track/set/panning", [track_index, value])
+
+    async def set_track_mute(self, track_index: int, mute: bool) -> dict:
+        """
+        Sets the mute state of a track.
+        :param track_index: The index of the track.
+        :param mute: True to mute, False to unmute.
+        """
+        return await self.send_osc(
+            "/live/track/set/mute", [track_index, 1 if mute else 0]
+        )
+
+    async def set_track_solo(self, track_index: int, solo: bool) -> dict:
+        """
+        Sets the solo state of a track.
+        :param track_index: The index of the track.
+        :param solo: True to solo, False to unsolo.
+        """
+        return await self.send_osc(
+            "/live/track/set/solo", [track_index, 1 if solo else 0]
+        )
+
+    async def _get_tracks_fallback(
+        self, index_min: int, index_max: int, properties: List[str]
+    ) -> dict:
+        """Individual request fallback for bulk track properties using OSC bundles."""
+        num_tracks = index_max - index_min
+        results = [{"track_index": index_min + i} for i in range(num_tracks)]
+
+        bundle_messages = []
+        message_info = []
+
+        for prop in properties:
+            for i in range(num_tracks):
+                t_idx = index_min + i
+                bundle_messages.append(
+                    {"address": f"/live/track/get/{prop}", "args": [t_idx]}
+                )
+                message_info.append((i, prop))
+
+        if not bundle_messages:
+            return {"ok": True, "data": results}
+
+        log_debug(
+            f"Fetching {len(bundle_messages)} track properties via OSC bundles..."
+        )
+        # Split into smaller bundles to avoid MTU issues
+        chunk_size = 32
+        for j in range(0, len(bundle_messages), chunk_size):
+            chunk = bundle_messages[j : j + chunk_size]
+            bundle_resp = await self.send_bundle(chunk)
+
+            if bundle_resp["ok"]:
+                for k, res_item in enumerate(bundle_resp["data"]):
+                    if res_item.get("ok"):
+                        idx, prop = message_info[j + k]
+                        data = res_item.get("result", {}).get("data", [])
+                        # Response format: (track_index, property_value)
+                        if len(data) >= 2:
+                            results[idx][prop] = data[1]
+                        elif len(data) == 1:
+                            results[idx][prop] = data[0]
+
+        return {"ok": True, "data": results}
+
+    @staticmethod
+    async def _analyze_stems_pipeline(summary_only: bool = False):
+        """Internal audio analysis pipeline."""
+        src_dir = config.STEMS_SOURCE_DIR
         ext = f".{config.PREFERRED_AUDIO_FORMAT.lower()}"
-        if os.path.exists(out_dir):
-            audio_files = [os.path.join(out_dir, f) for f in os.listdir(out_dir) if f.lower().endswith(ext)]
-            if audio_files:
-                log_debug(f"Starting parallel analysis of {len(audio_files)} stems...")
-                analysis_tasks = [asyncio.to_thread(process_audio_file, f) for f in audio_files]
-                await asyncio.gather(*analysis_tasks)
-                log_debug(f"Parallel analysis finished.")
+
+        if not os.path.exists(src_dir):
+            log_error(f"STEMS_SOURCE_DIR does not exist: {src_dir}")
+            return False
+
+        audio_files = [
+            os.path.join(src_dir, f)
+            for f in os.listdir(src_dir)
+            if f.lower().endswith(ext)
+        ]
+        if audio_files:
+            log_debug(
+                f"Starting parallel analysis (summary_only={summary_only}) of {len(audio_files)} stems from {src_dir}..."
+            )
+            analysis_tasks = [
+                asyncio.to_thread(process_audio_file, f, "", summary_only)
+                for f in audio_files
+            ]
+            await asyncio.gather(*analysis_tasks)
+            log_debug("Parallel analysis finished.")
+        else:
+            log_info(f"No audio files with extension {ext} found in {src_dir}")
+
         return True
 
-    async def _get_mix_snapshot_internal(self) -> dict:
-        """Internal mix snapshot logic."""
+    async def _extract_project_data_internal(self) -> dict:
+        """Internal project data extraction logic."""
         try:
-            song_resp = await self.get_song_overview()
-            if not song_resp['ok']:
+            song_resp = await self.get_overview()
+            if not song_resp["ok"]:
                 self._save_to_out(song_resp)
                 return song_resp
 
-            num_tracks = song_resp['data'].get('num_tracks', 0)
+            num_tracks = song_resp["data"].get("num_tracks", 0)
             tracks_list: List[Dict[str, Any]] = []
-            snapshot = {
+            project_data = {
                 "project": {
-                    "tempo": song_resp['data'].get('tempo'),
+                    "tempo": song_resp["data"].get("tempo"),
                     "num_tracks": num_tracks,
-                    "song_length": song_resp['data'].get('song_length')
+                    "song_length": song_resp["data"].get("song_length"),
+                    "locators": song_resp["data"].get("locators", []),
                 },
-                "tracks": tracks_list
+                "tracks": tracks_list,
             }
 
             if num_tracks == 0:
-                result = {"ok": True, "data": snapshot}
+                result = {"ok": True, "data": project_data}
                 self._save_to_out(result)
                 return result
 
-            properties = ["name", "volume", "panning", "mute", "solo", "output_meter_level", "is_foldable", "is_grouped"]
-            tracks_bulk_resp = await self.get_tracks_bulk(0, num_tracks, properties)
+            properties = [
+                "name",
+                "volume",
+                "panning",
+                "mute",
+                "solo",
+                "output_meter_level",
+                "is_foldable",
+                "is_grouped",
+            ]
+            tracks_bulk_resp = await self.get_tracks(0, num_tracks, properties)
 
-            if not tracks_bulk_resp['ok']:
-                result = {"ok": False, "error": tracks_bulk_resp.get('error'), "partial_data": snapshot}
+            if not tracks_bulk_resp["ok"]:
+                result = {
+                    "ok": False,
+                    "error": tracks_bulk_resp.get("error"),
+                    "partial_data": project_data,
+                }
                 self._save_to_out(result)
                 return result
 
-            tracks_data = tracks_bulk_resp['data']
-            device_tasks = [self.get_track_devices(t["track_index"]) for t in tracks_data]
+            tracks_data = tracks_bulk_resp["data"]
+
+            device_tasks = [
+                self.get_track_devices(t["track_index"]) for t in tracks_data
+            ]
             device_responses = await asyncio.gather(*device_tasks)
 
             track_to_devices = {}
@@ -604,10 +1053,18 @@ class AbletonClient:
                 for device in track_data["devices"]:
                     class_name = device.get("class_name")
                     name = device.get("name")
-                    is_rel = class_name in rel_classes or (name and any(rn == name or f" {rn}" in name or f"{rn} " in name for rn in rel_names))
+                    is_rel = class_name in rel_classes or (
+                        name
+                        and any(
+                            rn == name or f" {rn}" in name or f"{rn} " in name
+                            for rn in rel_names
+                        )
+                    )
 
                     if is_rel:
-                        param_tasks.append(self.get_device_parameters(t_idx, device["device_index"]))
+                        param_tasks.append(
+                            self.get_device_parameters(t_idx, device["device_index"])
+                        )
                         param_task_info.append((t_idx, device["device_index"]))
 
                 tracks_list.append(track_data)
@@ -622,13 +1079,13 @@ class AbletonClient:
                         if track:
                             for d in track.get("devices", []):
                                 if d.get("device_index") == d_idx:
-                                    d["parameters"] = p_resp['data'].get("parameters", [])
+                                    d.update(p_resp["data"])
                                     break
 
             result = {
                 "ok": True,
-                "data": snapshot,
-                "description": "Snapshot successfully created and saved."
+                "data": project_data,
+                "description": "Project data successfully extracted and saved.",
             }
             self._save_to_out(result)
             return result
@@ -637,20 +1094,116 @@ class AbletonClient:
             self._save_to_out(err_res)
             return err_res
 
-    async def snapshot_mix_and_save_as_json(self) -> dict:
-        """Ultimate snapshot tool logic."""
-        log_info(f"Starting ULTIMATE MIX SNAPSHOT pipeline...")
+    def _format_duration(self, duration: float) -> str:
+        """Helper to format duration in a human-readable way."""
+        if duration >= 60:
+            m, s = divmod(int(duration), 60)
+            return f"{m}m {s}s"
+        return f"{duration:.2f}s"
+
+    async def analyze_stems_and_extract_ableton_project_data(self) -> dict:
+        """
+        Full Pipeline: Executes audio analysis of stems AND extracts project data.
+        """
+        log_info("Starting FULL ANALYSIS & DATA EXTRACTION pipeline...")
         start_time = time.time()
         try:
             self._clear_out_folder()
-            analysis_task = asyncio.create_task(self._run_audio_analysis_pipeline())
-            snapshot_task = asyncio.create_task(self._get_mix_snapshot_internal())
-            await asyncio.gather(analysis_task, snapshot_task)
-            return snapshot_task.result()
+            analysis_task = asyncio.create_task(self._analyze_stems_pipeline())
+            extraction_task = asyncio.create_task(self._extract_project_data_internal())
+            await asyncio.gather(analysis_task, extraction_task)
+            return extraction_task.result()
         finally:
             duration = time.time() - start_time
-            m, s = divmod(int(duration), 60)
-            log_info(f"Pipeline finished. Duration: {m}m {s}s")
+            log_info(f"Pipeline finished. Duration: {self._format_duration(duration)}")
+
+    async def analyze_stems(self) -> dict:
+        """
+        Executes the FULL audio analysis of stems (spectrograms + full + summary).
+        """
+        log_info("Starting FULL STEM ANALYSIS...")
+        start_time = time.time()
+        try:
+            self._clear_out_folder()
+            await self._analyze_stems_pipeline(summary_only=False)
+            return {"ok": True, "description": "Full stem analysis finished."}
+        finally:
+            duration = time.time() - start_time
+            log_info(
+                f"Full stem analysis finished. Duration: {self._format_duration(duration)}"
+            )
+
+    async def summarize_stems(self) -> dict:
+        """
+        Executes ONLY the summary audio analysis of stems (fast).
+        """
+        log_info("Starting STEM SUMMARY ONLY...")
+        start_time = time.time()
+        try:
+            self._clear_out_folder()
+            await self._analyze_stems_pipeline(summary_only=True)
+            return {"ok": True, "description": "Stem summary finished."}
+        finally:
+            duration = time.time() - start_time
+            log_info(
+                f"Stem summary finished. Duration: {self._format_duration(duration)}"
+            )
+
+    async def extract_ableton_project_data(self) -> dict:
+        """
+        Extracts ONLY the project metadata, tracks, and devices
+        and saves them as JSON, without audio analysis.
+        """
+        log_info("Starting PROJECT DATA EXTRACTION (metadata only)...")
+        start_time = time.time()
+        try:
+            return await self._extract_project_data_internal()
+        finally:
+            duration = time.time() - start_time
+            log_info(
+                f"Data extraction finished. Duration: {self._format_duration(duration)}"
+            )
+
+    async def get_available_stem_summaries(self) -> List[str]:
+        """
+        Scans the summaries directory for available stem analysis JSON files.
+        Returns a list of track names, including those with project-name prefixes.
+        """
+        summaries_dir = config.get_summaries_path()
+        if not os.path.exists(summaries_dir):
+            return []
+
+        files = os.listdir(summaries_dir)
+        # Match filenames like "TrackName.summary.json" or "ProjectName TrackName.summary.json"
+        stems = []
+        for f in files:
+            if f.endswith(".summary.json"):
+                # Handle both "name.summary.json" and "name.01.summary.json"
+                name = f.replace(".summary.json", "")
+                # If it ends with .XX (chunk suffix), strip it for the stem list
+                name = re.sub(r"\.\d{2}$", "", name)
+                if name not in stems:
+                    stems.append(name)
+        return sorted(stems)
+
+    async def get_available_stem_spectrograms(self) -> List[str]:
+        """
+        Scans the spectrograms directory for available spectrogram WebP files.
+        Returns a list of track names, including those with project-name prefixes.
+        """
+        spectrograms_dir = config.get_spectrograms_path()
+        if not os.path.exists(spectrograms_dir):
+            return []
+
+        files = os.listdir(spectrograms_dir)
+        # Match filenames like "TrackName.spectrogram.webp" or "ProjectName TrackName.spectrogram.webp"
+        spectrograms = []
+        for f in files:
+            if f.endswith(".spectrogram.webp"):
+                name = f.replace(".spectrogram.webp", "")
+                spectrograms.append(name)
+        return sorted(spectrograms)
+
 
 if __name__ == "__main__":
     client = AbletonClient()
@@ -658,4 +1211,4 @@ if __name__ == "__main__":
         asyncio.run(client.run_tool(sys.argv[1]))
     else:
         log_info("AbletonClient CLI usage: uv run ableton_client.py <tool_name>")
-        log_info("Example: uv run ableton_client.py snapshot_mix_and_save_as_json")
+        log_info("Example: uv run ableton_client.py extract_ableton_project_data")
