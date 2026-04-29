@@ -102,34 +102,36 @@ DEFAULT_PREFERRED_AUDIO_FORMAT = "wav"  # wav | mp3
 
 ## 🚀 Usage
 
-### Prerequisite: Start the OSC Daemon
-
-The daemon acts as the bridge between the MCP server and Ableton. It **must always be running** in the background for both workflows:
-
-```bash
-uv run osc_daemon.py
-```
 
 ### 1. MCP Server (Real-time Interaction)
 
-#### Add the MCP Server to your Chatbot
+#### Connect to an MCP Client
 
-To use Ableton Live with an MCP-capable client (like Claude Desktop, Co-Pilot, Cline, ...), add the server to your configuration.
+To use Ableton Live with an MCP-capable client (like Claude Desktop, Cursor, or Cline), add the server to your configuration.
 
-**Important:** You must provide the **absolute path** to this project directory and ensure `uv` is installed and accessible.
-
-##### Claude Desktop
-
-- macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
-- Windows: `%APPDATA%\Claude\claude_desktop_config.json`
-
-Open the file with a text editor like `idea` or `code` and add the following entry:
+##### Option A: Via PyPI (Recommended — no cloning required)
 
 ```bash
-idea ~/Library/Application\ Support/Claude/claude_desktop_config.json
+pip install ableton-for-ai
 ```
 
-Change the `mcpServers` section to include the `ableton-for-ai` MCP-server:
+Then add to your MCP client config:
+
+```json
+{
+  "mcpServers": {
+    "ableton-for-ai": {
+      "command": "uvx",
+      "args": ["ableton-for-ai"],
+      "env": {
+        "STEMS_SOURCE_DIR": "/path/to/your/stems"
+      }
+    }
+  }
+}
+```
+
+##### Option B: From source (after cloning)
 
 ```json
 {
@@ -138,15 +140,25 @@ Change the `mcpServers` section to include the `ableton-for-ai` MCP-server:
       "command": "uv",
       "args": [
         "--directory",
-        "/Users/YOUR_USER/path/to/ableton-for-ai",
+        "/absolute/path/to/ableton-for-ai",
         "run",
         "mcp_server_ableton.py"
-      ]
+      ],
+      "env": {
+        "STEMS_SOURCE_DIR": "/path/to/your/stems"
+      }
     }
   }
 }
 ```
-**Restart Claude Desktop** and you should be able to connect to the server.
+
+##### Where to put this config
+
+- **Claude Desktop (macOS):** `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Claude Desktop (Windows):** `%APPDATA%\Claude\claude_desktop_config.json`
+- **Cursor / Cline:** See their respective MCP documentation.
+
+**Restart your MCP client** after saving the config.
 
 
 #### Use the MCP Server within your Chatbot
@@ -164,16 +176,38 @@ example:
 
 Use this if you want to work with any AI by manually uploading project data and audio analysis.
 
-#### Analyze Stems
+#### Available CLI Commands
 
-Run this command to analyze your audio:
+Full audio analysis (summaries + spectrograms + full analysis JSONs):
 
 ```bash
-# Audio analysis ONLY: Summaries + Spectrograms + Full Analysis
-uv run ableton_client.py analyze_stems
-# OR use the shell script:
-./run_analyze_summarize_create_spectrograms.sh
+ableton-for-ai-cli analyze_stems
 ```
+
+Extract Ableton project metadata only (tracks, devices, parameters):
+
+```bash
+ableton-for-ai-cli extract_ableton_project_data
+```
+
+Full pipeline (audio analysis AND project data extraction):
+
+```bash
+ableton-for-ai-cli analyze_stems_and_extract_ableton_project_data
+```
+
+<details>
+<summary>Alternative: run from source (without installing)</summary>
+
+```bash
+uv run ableton_client.py analyze_stems
+uv run ableton_client.py extract_ableton_project_data
+uv run ableton_client.py analyze_stems_and_extract_ableton_project_data
+```
+</details>
+
+> [!NOTE]
+> The OSC daemon starts automatically — no need to launch it manually.
 
 The results will be stored in the `./out` directory, organized into subfolders:
 

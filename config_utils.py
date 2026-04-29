@@ -1,23 +1,28 @@
-import re
-import unicodedata
 import os
+import re
 import sys
+import unicodedata
 from pathlib import Path
-from typing import Set
 
 # Import defaults from config.py
 from config import (
-    DEFAULT_STEMS_SOURCE_DIR,
-    DEFAULT_PREFERRED_AUDIO_FORMAT,
-    DEFAULT_RELEVANT_DEVICE_NAMES,
-    DEFAULT_RELEVANT_DEVICE_CLASSES,
-    DEFAULT_LOG_LEVEL,
-    DEFAULT_BASE_OUT_DIR,
-    DEFAULT_PROJECT_JSON_FILENAME,
+    DEFAULT_ABLETON_OSC_HOST,
+    DEFAULT_ABLETON_OSC_RECEIVE_PORT,
+    DEFAULT_ABLETON_OSC_SEND_PORT,
     DEFAULT_ANALYSIS_FRAME_DURATION_MS,
+    DEFAULT_BASE_OUT_DIR,
+    DEFAULT_DAEMON_HOST,
+    DEFAULT_DAEMON_PORT,
+    DEFAULT_LOG_LEVEL,
+    DEFAULT_PREFERRED_AUDIO_FORMAT,
+    DEFAULT_PROJECT_JSON_FILENAME,
+    DEFAULT_RELEVANT_DEVICE_CLASSES,
+    DEFAULT_RELEVANT_DEVICE_NAMES,
     DEFAULT_SPECTROGRAM_QUALITY,
-    DEFAULT_SUMMARY_MAX_SIZE_KB
+    DEFAULT_STEMS_SOURCE_DIR,
+    DEFAULT_SUMMARY_MAX_SIZE_KB,
 )
+
 
 def sanitize_filename(name: str) -> str:
     """
@@ -30,131 +35,181 @@ def sanitize_filename(name: str) -> str:
     # Convert to lowercase
     name = name.lower()
     # Normalize unicode to decompose characters (e.g., 'ä' to 'a' + 'umlaut')
-    name = unicodedata.normalize('NFKD', name)
+    name = unicodedata.normalize("NFKD", name)
     # Encode to ascii, ignoring non-ascii characters
-    name = name.encode('ascii', 'ignore').decode('ascii')
+    name = name.encode("ascii", "ignore").decode("ascii")
     # Replace anything that isn't a-z, 0-9, '-', '.' with '-'
-    name = re.sub(r'[^a-z0-9\-.]', '-', name)
+    name = re.sub(r"[^a-z0-9\-.]", "-", name)
     # Replace multiple dashes with a single dash
-    name = re.sub(r'-+', '-', name)
+    name = re.sub(r"-+", "-", name)
     # Strip leading/trailing dashes
-    name = name.strip('-')
+    name = name.strip("-")
     return name
 
+
 class Configuration:
-  """
-  Centralized configuration management with validation and environment support.
-  """
+    """
+    Centralized configuration management with validation and environment support.
+    """
 
-  def __init__(self):
-    # Read from environment or use defaults
-    self._log_level = os.getenv("LOG_LEVEL", DEFAULT_LOG_LEVEL).upper()
-    self._base_out_dir = os.getenv("BASE_OUT_DIR", DEFAULT_BASE_OUT_DIR)
-    self._stems_source_dir = os.getenv("STEMS_SOURCE_DIR", DEFAULT_STEMS_SOURCE_DIR)
-    self._project_json_filename = sanitize_filename(os.getenv("PROJECT_JSON_FILENAME", os.getenv("SNAPSHOT_JSON_FILENAME", DEFAULT_PROJECT_JSON_FILENAME)))
-    self._preferred_audio_format = os.getenv("PREFERRED_AUDIO_FORMAT", DEFAULT_PREFERRED_AUDIO_FORMAT).lower()
-    self._spectrogram_quality = int(os.getenv("SPECTROGRAM_QUALITY", DEFAULT_SPECTROGRAM_QUALITY))
-    self._summary_max_size_kb = int(os.getenv("SUMMARY_MAX_SIZE_KB", DEFAULT_SUMMARY_MAX_SIZE_KB))
-    self._analysis_frame_duration_ms = int(os.getenv("ANALYSIS_FRAME_DURATION_MS", DEFAULT_ANALYSIS_FRAME_DURATION_MS))
-    self._analyses_dir = os.getenv("ANALYSES_DIR", "analyses")
-    self._spectrograms_dir = os.getenv("SPECTROGRAMS_DIR", "spectrograms")
-    self._summaries_dir = os.getenv("SUMMARIES_DIR", "summaries")
-    self._project_dir = os.getenv("PROJECT_DIR", "project")
+    def __init__(self):
+        # Read from environment or use defaults
+        self._daemon_host = os.getenv("DAEMON_HOST", DEFAULT_DAEMON_HOST)
+        self._daemon_port = int(os.getenv("DAEMON_PORT", DEFAULT_DAEMON_PORT))
+        self._ableton_osc_host = os.getenv("ABLETON_OSC_HOST", DEFAULT_ABLETON_OSC_HOST)
+        self._ableton_osc_send_port = int(os.getenv("ABLETON_OSC_SEND_PORT", DEFAULT_ABLETON_OSC_SEND_PORT))
+        self._ableton_osc_receive_port = int(os.getenv("ABLETON_OSC_RECEIVE_PORT", DEFAULT_ABLETON_OSC_RECEIVE_PORT))
+        self._log_level = os.getenv("LOG_LEVEL", DEFAULT_LOG_LEVEL).upper()
+        self._base_out_dir = os.getenv("BASE_OUT_DIR", DEFAULT_BASE_OUT_DIR)
+        self._stems_source_dir = os.getenv("STEMS_SOURCE_DIR", DEFAULT_STEMS_SOURCE_DIR)
+        self._project_json_filename = sanitize_filename(
+            os.getenv(
+                "PROJECT_JSON_FILENAME",
+                os.getenv("SNAPSHOT_JSON_FILENAME", DEFAULT_PROJECT_JSON_FILENAME),
+            )
+        )
+        self._preferred_audio_format = os.getenv("PREFERRED_AUDIO_FORMAT", DEFAULT_PREFERRED_AUDIO_FORMAT).lower()
+        self._spectrogram_quality = int(os.getenv("SPECTROGRAM_QUALITY", DEFAULT_SPECTROGRAM_QUALITY))
+        self._summary_max_size_kb = int(os.getenv("SUMMARY_MAX_SIZE_KB", DEFAULT_SUMMARY_MAX_SIZE_KB))
+        self._analysis_frame_duration_ms = int(
+            os.getenv("ANALYSIS_FRAME_DURATION_MS", DEFAULT_ANALYSIS_FRAME_DURATION_MS)
+        )
+        self._analyses_dir = os.getenv("ANALYSES_DIR", "analyses")
+        self._spectrograms_dir = os.getenv("SPECTROGRAMS_DIR", "spectrograms")
+        self._summaries_dir = os.getenv("SUMMARIES_DIR", "summaries")
+        self._project_dir = os.getenv("PROJECT_DIR", "project")
 
-    # Lists and Sets (support comma-separated environment variables)
-    env_classes = os.getenv("RELEVANT_DEVICE_CLASSES")
-    self.RELEVANT_DEVICE_CLASSES: Set[str] = {c.strip() for c in env_classes.split(",")} if env_classes else DEFAULT_RELEVANT_DEVICE_CLASSES
+        # Lists and Sets (support comma-separated environment variables)
+        env_classes = os.getenv("RELEVANT_DEVICE_CLASSES")
+        self.RELEVANT_DEVICE_CLASSES: set[str] = (
+            {c.strip() for c in env_classes.split(",")} if env_classes else DEFAULT_RELEVANT_DEVICE_CLASSES
+        )
 
-    env_names = os.getenv("RELEVANT_DEVICE_NAMES")
-    self.RELEVANT_DEVICE_NAMES: Set[str] = {n.strip() for n in env_names.split(",")} if env_names else DEFAULT_RELEVANT_DEVICE_NAMES
+        env_names = os.getenv("RELEVANT_DEVICE_NAMES")
+        self.RELEVANT_DEVICE_NAMES: set[str] = (
+            {n.strip() for n in env_names.split(",")} if env_names else DEFAULT_RELEVANT_DEVICE_NAMES
+        )
 
-    self._validate()
+        self._validate()
 
-  def _validate(self):
-    """Internal validation of settings."""
-    if self._log_level not in ["INFO", "DEBUG"]:
-      print(f"[WARNING] Invalid LOG_LEVEL '{self._log_level}'. Using DEFAULT: {DEFAULT_LOG_LEVEL}", file=sys.stderr)
-      self._log_level = DEFAULT_LOG_LEVEL
+    def _validate(self):
+        """Internal validation of settings."""
+        if self._log_level not in ["INFO", "DEBUG"]:
+            print(
+                f"[WARNING] Invalid LOG_LEVEL '{self._log_level}'. Using DEFAULT: {DEFAULT_LOG_LEVEL}",
+                file=sys.stderr,
+            )
+            self._log_level = DEFAULT_LOG_LEVEL
 
-    if self._preferred_audio_format not in ["mp3", "wav"]:
-      print(f"[WARNING] Invalid PREFERRED_AUDIO_FORMAT '{self._preferred_audio_format}'. Using DEFAULT: {DEFAULT_PREFERRED_AUDIO_FORMAT}",
-            file=sys.stderr)
-      self._preferred_audio_format = DEFAULT_PREFERRED_AUDIO_FORMAT
+        if self._preferred_audio_format not in ["mp3", "wav"]:
+            print(
+                f"[WARNING] Invalid PREFERRED_AUDIO_FORMAT '{self._preferred_audio_format}'. Using DEFAULT: {DEFAULT_PREFERRED_AUDIO_FORMAT}",
+                file=sys.stderr,
+            )
+            self._preferred_audio_format = DEFAULT_PREFERRED_AUDIO_FORMAT
 
-    if not (1 <= self._spectrogram_quality <= 100):
-      print(f"[WARNING] Invalid SPECTROGRAM_QUALITY '{self._spectrogram_quality}'. Must be 1-100. Using DEFAULT: {DEFAULT_SPECTROGRAM_QUALITY}",
-            file=sys.stderr)
-      self._spectrogram_quality = DEFAULT_SPECTROGRAM_QUALITY
+        if not (1 <= self._spectrogram_quality <= 100):
+            print(
+                f"[WARNING] Invalid SPECTROGRAM_QUALITY '{self._spectrogram_quality}'. Must be 1-100. Using DEFAULT: {DEFAULT_SPECTROGRAM_QUALITY}",
+                file=sys.stderr,
+            )
+            self._spectrogram_quality = DEFAULT_SPECTROGRAM_QUALITY
 
-    # Path validation
-    source_path = Path(self._stems_source_dir)
-    if not source_path.exists():
-      print(f"[WARNING] STEMS_SOURCE_DIR does not exist: {self._stems_source_dir}", file=sys.stderr)
-      print("[WARNING] Audio analysis will be skipped for non-existent stems.", file=sys.stderr)
+        # Path validation
+        source_path = Path(self._stems_source_dir)
+        if not source_path.exists():
+            print(
+                f"[WARNING] STEMS_SOURCE_DIR does not exist: {self._stems_source_dir}",
+                file=sys.stderr,
+            )
+            print(
+                "[WARNING] Audio analysis will be skipped for non-existent stems.",
+                file=sys.stderr,
+            )
 
-  @property
-  def LOG_LEVEL(self) -> str:
-    return self._log_level
+    @property
+    def LOG_LEVEL(self) -> str:
+        return self._log_level
 
-  @property
-  def BASE_OUT_DIR(self) -> str:
-    return self._base_out_dir
+    @property
+    def DAEMON_HOST(self) -> str:
+        return self._daemon_host
 
-  @property
-  def STEMS_SOURCE_DIR(self) -> str:
-    return self._stems_source_dir
+    @property
+    def DAEMON_PORT(self) -> int:
+        return self._daemon_port
 
-  @property
-  def PROJECT_JSON_FILENAME(self) -> str:
-    return self._project_json_filename
+    @property
+    def ABLETON_OSC_HOST(self) -> str:
+        return self._ableton_osc_host
 
-  @property
-  def PREFERRED_AUDIO_FORMAT(self) -> str:
-    return self._preferred_audio_format
+    @property
+    def ABLETON_OSC_SEND_PORT(self) -> int:
+        return self._ableton_osc_send_port
 
-  @property
-  def SPECTROGRAM_QUALITY(self) -> int:
-    return self._spectrogram_quality
+    @property
+    def ABLETON_OSC_RECEIVE_PORT(self) -> int:
+        return self._ableton_osc_receive_port
 
-  @property
-  def SUMMARY_MAX_SIZE_KB(self) -> int:
-    return self._summary_max_size_kb
+    @property
+    def BASE_OUT_DIR(self) -> str:
+        return self._base_out_dir
 
-  @property
-  def ANALYSIS_FRAME_DURATION_MS(self) -> int:
-    return self._analysis_frame_duration_ms
+    @property
+    def STEMS_SOURCE_DIR(self) -> str:
+        return self._stems_source_dir
 
-  @property
-  def ANALYSES_DIR(self) -> str:
-    return self._analyses_dir
+    @property
+    def PROJECT_JSON_FILENAME(self) -> str:
+        return self._project_json_filename
 
-  @property
-  def SPECTROGRAMS_DIR(self) -> str:
-    return self._spectrograms_dir
+    @property
+    def PREFERRED_AUDIO_FORMAT(self) -> str:
+        return self._preferred_audio_format
 
-  @property
-  def SUMMARIES_DIR(self) -> str:
-    return self._summaries_dir
+    @property
+    def SPECTROGRAM_QUALITY(self) -> int:
+        return self._spectrogram_quality
 
-  @property
-  def PROJECT_DIR(self) -> str:
-    return self._project_dir
+    @property
+    def SUMMARY_MAX_SIZE_KB(self) -> int:
+        return self._summary_max_size_kb
 
-  def get_project_json_path(self) -> str:
-    """Constructs the full path to the project JSON file."""
-    return os.path.join(self.BASE_OUT_DIR, self.PROJECT_DIR, self.PROJECT_JSON_FILENAME)
+    @property
+    def ANALYSIS_FRAME_DURATION_MS(self) -> int:
+        return self._analysis_frame_duration_ms
 
-  def get_analyses_path(self) -> str:
-    return os.path.join(self.BASE_OUT_DIR, self.ANALYSES_DIR)
+    @property
+    def ANALYSES_DIR(self) -> str:
+        return self._analyses_dir
 
-  def get_spectrograms_path(self) -> str:
-    return os.path.join(self.BASE_OUT_DIR, self.SPECTROGRAMS_DIR)
+    @property
+    def SPECTROGRAMS_DIR(self) -> str:
+        return self._spectrograms_dir
 
-  def get_summaries_path(self) -> str:
-    return os.path.join(self.BASE_OUT_DIR, self.SUMMARIES_DIR)
+    @property
+    def SUMMARIES_DIR(self) -> str:
+        return self._summaries_dir
 
-  def get_project_path(self) -> str:
-    return os.path.join(self.BASE_OUT_DIR, self.PROJECT_DIR)
+    @property
+    def PROJECT_DIR(self) -> str:
+        return self._project_dir
+
+    def get_project_json_path(self) -> str:
+        """Constructs the full path to the project JSON file."""
+        return os.path.join(self.BASE_OUT_DIR, self.PROJECT_DIR, self.PROJECT_JSON_FILENAME)
+
+    def get_analyses_path(self) -> str:
+        return os.path.join(self.BASE_OUT_DIR, self.ANALYSES_DIR)
+
+    def get_spectrograms_path(self) -> str:
+        return os.path.join(self.BASE_OUT_DIR, self.SPECTROGRAMS_DIR)
+
+    def get_summaries_path(self) -> str:
+        return os.path.join(self.BASE_OUT_DIR, self.SUMMARIES_DIR)
+
+    def get_project_path(self) -> str:
+        return os.path.join(self.BASE_OUT_DIR, self.PROJECT_DIR)
 
 
 # =============================================================================
@@ -166,6 +221,11 @@ _config = Configuration()
 
 # Map instance properties to module-level variables
 LOG_LEVEL = _config.LOG_LEVEL
+DAEMON_HOST = _config.DAEMON_HOST
+DAEMON_PORT = _config.DAEMON_PORT
+ABLETON_OSC_HOST = _config.ABLETON_OSC_HOST
+ABLETON_OSC_SEND_PORT = _config.ABLETON_OSC_SEND_PORT
+ABLETON_OSC_RECEIVE_PORT = _config.ABLETON_OSC_RECEIVE_PORT
 BASE_OUT_DIR = _config.BASE_OUT_DIR
 STEMS_SOURCE_DIR = _config.STEMS_SOURCE_DIR
 PROJECT_JSON_FILENAME = _config.PROJECT_JSON_FILENAME
@@ -182,20 +242,20 @@ RELEVANT_DEVICE_NAMES = _config.RELEVANT_DEVICE_NAMES
 
 
 def get_project_json_path():
-  return _config.get_project_json_path()
+    return _config.get_project_json_path()
 
 
 def get_analyses_path():
-  return _config.get_analyses_path()
+    return _config.get_analyses_path()
 
 
 def get_spectrograms_path():
-  return _config.get_spectrograms_path()
+    return _config.get_spectrograms_path()
 
 
 def get_summaries_path():
-  return _config.get_summaries_path()
+    return _config.get_summaries_path()
 
 
 def get_project_path():
-  return _config.get_project_path()
+    return _config.get_project_path()

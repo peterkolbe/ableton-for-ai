@@ -42,3 +42,4 @@ ENV/
 htmlcov/
 out/
 stems/
+.ruff_cache/

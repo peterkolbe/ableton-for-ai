@@ -103,19 +103,17 @@ The project attempts to detect whether a device has an active external sidechain
 ## Testing Procedures
 To ensure stability and correctness after making changes to `ableton_client.py` or `osc_daemon.py`, follow these steps:
 
-1. **Restart Daemon (if modified)**: If you made changes to `osc_daemon.py`, you MUST restart it.
+1. **Kill existing Daemon (if modified)**: If you made changes to `osc_daemon.py`, kill any running instance. The daemon will auto-restart on next CLI/MCP invocation.
    ```bash
    pkill -f "python.*osc_daemon.py" || true
-   nohup uv run osc_daemon.py > daemon.log 2>&1 &
-   sleep 2
    ```
 2. **Unit/Feature Test**: Directly test the specific function you modified. For example, if you changed a bulk retrieval method, run a small script to verify that specific call.
-3. **Integration Test**: Always run a full project data extraction (via CLI) to verify the entire pipeline (Client -> Daemon -> Ableton -> Daemon -> Client).
+3. **Integration Test**: Always run a full project data extraction (via CLI) to verify the entire pipeline (Client -> Daemon -> Ableton -> Daemon -> Client). The daemon starts automatically.
    ```bash
    uv run ableton_client.py extract_ableton_project_data
    ```
 4. **Validation**:
-   - Check the logs (`daemon.log` and stdout) for any "Unknown OSC address" or "Timeout" errors.
+   - Check stdout/stderr for any "Unknown OSC address" or "Timeout" errors.
    - Inspect the output file `out/project/ableton-project-for-ai.json` to ensure the data structure is correct and all expected fields are present.
    - Pay special attention to the `volume` and `panning` fields as they are fetched separately.
 

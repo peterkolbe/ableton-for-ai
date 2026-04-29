@@ -1,11 +1,12 @@
 import asyncio
+import contextlib
 import json
 import os
 import re
 import shutil
 import sys
 import time
-from typing import List, Optional, Dict, Any
+from typing import Any
 
 import config_utils as config
 from audio_processor import process_audio_file
@@ -28,9 +29,9 @@ def log_error(message: str):
 
 
 class AbletonClient:
-    def __init__(self, host="127.0.0.1", port=65432):
-        self.host = host
-        self.port = port
+    def __init__(self, host=None, port=None):
+        self.host = host or config.DAEMON_HOST
+        self.port = port or config.DAEMON_PORT
         self.reader = None
         self.writer = None
         self.connected = False
@@ -47,9 +48,7 @@ class AbletonClient:
         """Connect to the OSC daemon via asyncio."""
         if not self.connected:
             try:
-                self.reader, self.writer = await asyncio.open_connection(
-                    self.host, self.port
-                )
+                self.reader, self.writer = await asyncio.open_connection(self.host, self.port)
                 self.connected = True
                 self.response_task = asyncio.create_task(self.start_response_reader())
                 return True
@@ -101,15 +100,14 @@ class AbletonClient:
     async def send_rpc_request(self, method: str, params: dict) -> dict:
         """Sends a JSON-RPC request and waits for the response."""
         async with self.semaphore:
-            if not self.connected:
-                if not await self.connect():
-                    return {
-                        "ok": False,
-                        "error": {
-                            "code": "CONNECTION_ERROR",
-                            "message": "Not connected to daemon",
-                        },
-                    }
+            if not self.connected and not await self.connect():
+                return {
+                    "ok": False,
+                    "error": {
+                        "code": "CONNECTION_ERROR",
+                        "message": "Not connected to daemon",
+                    },
+                }
 
             async with self.lock:
                 self._request_id += 1
@@ -131,7 +129,7 @@ class AbletonClient:
 
                 try:
                     msg = await asyncio.wait_for(future, timeout=10.0)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     async with self.lock:
                         self.responses.pop(request_id, None)
                     return {
@@ -157,15 +155,13 @@ class AbletonClient:
                 self.connected = False
                 return {"ok": False, "error": {"code": "EXCEPTION", "message": str(e)}}
 
-    async def send_osc(self, address: str, args: Optional[list] = None) -> dict:
+    async def send_osc(self, address: str, args: list | None = None) -> dict:
         """Wrapper for sending OSC messages via the daemon."""
         if args is None:
             args = []
-        return await self.send_rpc_request(
-            "send_message", {"address": address, "args": args}
-        )
+        return await self.send_rpc_request("send_message", {"address": address, "args": args})
 
-    async def send_bundle(self, messages: List[Dict[str, Any]]) -> dict:
+    async def send_bundle(self, messages: list[dict[str, Any]]) -> dict:
         """Wrapper for sending OSC bundles via the daemon."""
         return await self.send_rpc_request("send_bundle", {"messages": messages})
 
@@ -175,16 +171,12 @@ class AbletonClient:
             self.connected = False
             if self.response_task:
                 self.response_task.cancel()
-                try:
+                with contextlib.suppress(asyncio.CancelledError):
                     await self.response_task
-                except asyncio.CancelledError:
-                    pass
             if self.writer:
                 self.writer.close()
-                try:
+                with contextlib.suppress(Exception):
                     await self.writer.wait_closed()
-                except Exception:
-                    pass
 
     # --- Business Logic Methods ---
 
@@ -327,16 +319,11 @@ class AbletonClient:
                     results["tracks"] = tracks_resp["data"]
                 else:
                     # Fallback to names only if bulk fails
-                    log_debug(
-                        "Bulk tracks fetch failed in overview, falling back to names."
-                    )
+                    log_debug("Bulk tracks fetch failed in overview, falling back to names.")
                     resp = await self.send_osc("/live/song/get/track_names")
                     if resp["ok"]:
                         names = resp["data"].get("data", [])
-                        results["tracks"] = [
-                            {"track_index": i, "name": name}
-                            for i, name in enumerate(names)
-                        ]
+                        results["tracks"] = [{"track_index": i, "name": name} for i, name in enumerate(names)]
             else:
                 results["tracks"] = []
 
@@ -378,9 +365,7 @@ class AbletonClient:
 
                 locators = []
                 for i in range(min(len(names), len(times))):
-                    locators.append(
-                        {"index": i, "name": names[i], "time_beats": times[i]}
-                    )
+                    locators.append({"index": i, "name": names[i], "time_beats": times[i]})
                 return {"ok": True, "data": locators}
 
             data = resp["data"].get("data", [])
@@ -434,16 +419,8 @@ class AbletonClient:
                 return {"ok": False, "error": names_resp.get("error")}
 
             names_raw = names_resp.get("result", {}).get("data", [])
-            types_raw = (
-                types_resp.get("result", {}).get("data", [])
-                if types_resp.get("ok")
-                else []
-            )
-            classes_raw = (
-                classes_resp.get("result", {}).get("data", [])
-                if classes_resp.get("ok")
-                else []
-            )
+            types_raw = types_resp.get("result", {}).get("data", []) if types_resp.get("ok") else []
+            classes_raw = classes_resp.get("result", {}).get("data", []) if classes_resp.get("ok") else []
 
             # Handle case where AbletonOSC returns track_index as first element
             def skip_index(data, idx):
@@ -477,7 +454,7 @@ class AbletonClient:
         Gets parameters of a device using OSC bundles.
         """
         try:
-            results: Dict[str, Any] = {
+            results: dict[str, Any] = {
                 "track_index": track_index,
                 "device_index": device_index,
                 "parameters": [],
@@ -536,23 +513,13 @@ class AbletonClient:
                 return {"ok": False, "error": n_resp.get("error")}
 
             p_names_raw = n_resp.get("result", {}).get("data", [])
-            p_values_raw = (
-                v_resp.get("result", {}).get("data", []) if v_resp.get("ok") else []
-            )
-            p_mins_raw = (
-                min_resp.get("result", {}).get("data", []) if min_resp.get("ok") else []
-            )
-            p_maxs_raw = (
-                max_resp.get("result", {}).get("data", []) if max_resp.get("ok") else []
-            )
+            p_values_raw = v_resp.get("result", {}).get("data", []) if v_resp.get("ok") else []
+            p_mins_raw = min_resp.get("result", {}).get("data", []) if min_resp.get("ok") else []
+            p_maxs_raw = max_resp.get("result", {}).get("data", []) if max_resp.get("ok") else []
 
             if len(p_names_raw) > 0:
                 skip = 0
-                if (
-                    len(p_names_raw) >= 2
-                    and p_names_raw[0] == track_index
-                    and p_names_raw[1] == device_index
-                ):
+                if len(p_names_raw) >= 2 and p_names_raw[0] == track_index and p_names_raw[1] == device_index:
                     skip = 2
                 elif len(p_names_raw) >= 1 and p_names_raw[0] == track_index:
                     skip = 1
@@ -578,9 +545,7 @@ class AbletonClient:
 
             p_value_strings = [None] * len(p_names)
             if bundle_messages:
-                log_debug(
-                    f"Fetching {len(bundle_messages)} value_strings via OSC bundle..."
-                )
+                log_debug(f"Fetching {len(bundle_messages)} value_strings via OSC bundle...")
                 # We split into smaller bundles if there are too many parameters to avoid MTU issues
                 # 32 messages per bundle is a safe limit for typical UDP packets
                 chunk_size = 32
@@ -603,9 +568,7 @@ class AbletonClient:
                     "parameter_index": i,
                     "name": name,
                     "value": p_values[i] if i < len(p_values) else None,
-                    "value_string": p_value_strings[i]
-                    if i < len(p_value_strings)
-                    else None,
+                    "value_string": p_value_strings[i] if i < len(p_value_strings) else None,
                     "min": p_mins[i] if i < len(p_mins) else 0.0,
                     "max": p_maxs[i] if i < len(p_maxs) else 1.0,
                 }
@@ -635,9 +598,7 @@ class AbletonClient:
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
-    async def get_tracks(
-        self, index_min: int, index_max: int, properties: List[str] = None
-    ) -> dict:
+    async def get_tracks(self, index_min: int, index_max: int, properties: list[str] | None = None) -> dict:
         """
         Bulk request for track properties.
         If 'properties' is None, returns FULL track information (metadata, devices, parameters)
@@ -650,9 +611,7 @@ class AbletonClient:
 
             # FULL mode: Get all info for each track in range
             if properties is None:
-                log_debug(
-                    f"Fetching FULL data for tracks {index_min} to {index_max} in optimized parallel mode..."
-                )
+                log_debug(f"Fetching FULL data for tracks {index_min} to {index_max} in optimized parallel mode...")
 
                 # 1. Optimized Bulk Meta Fetch for the whole range in ONE OSC call
                 meta_props = [
@@ -685,19 +644,14 @@ class AbletonClient:
 
                     # Fetch parameters for all devices in parallel
                     if devices:
-                        param_tasks = [
-                            self.get_device_parameters(t_idx, i)
-                            for i in range(len(devices))
-                        ]
+                        param_tasks = [self.get_device_parameters(t_idx, i) for i in range(len(devices))]
                         param_results = await asyncio.gather(*param_tasks)
                         for i, p_res in enumerate(param_results):
                             if p_res["ok"]:
-                                devices[i]["parameters"] = p_res["data"].get(
-                                    "parameters", []
+                                devices[i]["parameters"] = p_res["data"].get("parameters", [])
+                                devices[i]["has_external_side_chain_activated"] = p_res["data"].get(
+                                    "has_external_side_chain_activated", False
                                 )
-                                devices[i]["has_external_side_chain_activated"] = p_res[
-                                    "data"
-                                ].get("has_external_side_chain_activated", False)
                             else:
                                 devices[i]["parameters"] = []
                     return t_data
@@ -717,11 +671,9 @@ class AbletonClient:
             # 1. Fetch bulk properties if any
             if bulk_candidates:
                 api_props = [f"track.{p}" for p in bulk_candidates]
-                args = [index_min, index_max] + api_props
+                args = [index_min, index_max, *api_props]
 
-                log_debug(
-                    f"Sending bulk track_data request for {len(bulk_candidates)} properties..."
-                )
+                log_debug(f"Sending bulk track_data request for {len(bulk_candidates)} properties...")
                 resp = await self.send_osc("/live/song/get/track_data", args)
 
                 if resp["ok"]:
@@ -742,24 +694,16 @@ class AbletonClient:
                                 val_idx = i * len(bulk_candidates) + j
                                 results[i][prop] = actual_data[val_idx]
                     else:
-                        log_debug(
-                            f"Bulk data too short ({len(actual_data)} < {expected_total}), falling back."
-                        )
+                        log_debug(f"Bulk data too short ({len(actual_data)} < {expected_total}), falling back.")
                         to_fetch_individually.extend(bulk_candidates)
                 else:
-                    log_debug(
-                        f"Bulk request failed: {resp.get('error')}, falling back."
-                    )
+                    log_debug(f"Bulk request failed: {resp.get('error')}, falling back.")
                     to_fetch_individually.extend(bulk_candidates)
 
             # 2. Fetch individual properties
             if to_fetch_individually:
-                log_debug(
-                    f"Fetching {len(to_fetch_individually)} properties individually for {num_tracks} tracks..."
-                )
-                individual_resp = await self._get_tracks_fallback(
-                    index_min, index_max, to_fetch_individually
-                )
+                log_debug(f"Fetching {len(to_fetch_individually)} properties individually for {num_tracks} tracks...")
+                individual_resp = await self._get_tracks_fallback(index_min, index_max, to_fetch_individually)
                 if individual_resp["ok"]:
                     indiv_data = individual_resp["data"]
                     for i in range(num_tracks):
@@ -789,9 +733,7 @@ class AbletonClient:
                 "is_foldable",
                 "output_meter_level",
             ]
-            meta_resp = await self.get_tracks(
-                track_index, track_index + 1, properties
-            )
+            meta_resp = await self.get_tracks(track_index, track_index + 1, properties)
 
             if not meta_resp["ok"] or not meta_resp["data"]:
                 return {
@@ -815,26 +757,19 @@ class AbletonClient:
 
             # 3. Fetch Parameters for all devices in parallel
             if devices:
-                log_debug(
-                    f"Fetching parameters for {len(devices)} devices in parallel..."
-                )
-                param_tasks = [
-                    self.get_device_parameters(track_index, i)
-                    for i in range(len(devices))
-                ]
+                log_debug(f"Fetching parameters for {len(devices)} devices in parallel...")
+                param_tasks = [self.get_device_parameters(track_index, i) for i in range(len(devices))]
                 param_results = await asyncio.gather(*param_tasks)
 
                 for i, p_res in enumerate(param_results):
                     if p_res["ok"]:
                         # Merge parameter data into device object
                         devices[i]["parameters"] = p_res["data"].get("parameters", [])
-                        devices[i]["has_external_side_chain_activated"] = p_res[
-                            "data"
-                        ].get("has_external_side_chain_activated", False)
-                    else:
-                        log_error(
-                            f"Failed to fetch parameters for device {i}: {p_res.get('error')}"
+                        devices[i]["has_external_side_chain_activated"] = p_res["data"].get(
+                            "has_external_side_chain_activated", False
                         )
+                    else:
+                        log_error(f"Failed to fetch parameters for device {i}: {p_res.get('error')}")
                         devices[i]["parameters"] = []
 
             return {"ok": True, "data": track_data}
@@ -857,9 +792,7 @@ class AbletonClient:
             [track_index, device_index, parameter_index, value],
         )
 
-    async def set_device_parameters(
-        self, track_index: int, device_index: int, values: List[float]
-    ) -> dict:
+    async def set_device_parameters(self, track_index: int, device_index: int, values: list[float]) -> dict:
         """
         Sets multiple parameter values for a device in bulk.
         :param track_index: The index of the track.
@@ -868,7 +801,7 @@ class AbletonClient:
         """
         return await self.send_osc(
             "/live/device/set/parameters/value",
-            [track_index, device_index] + list(values),
+            [track_index, device_index, *list(values)],
         )
 
     async def set_track_volume(self, track_index: int, value: float) -> dict:
@@ -893,9 +826,7 @@ class AbletonClient:
         :param track_index: The index of the track.
         :param mute: True to mute, False to unmute.
         """
-        return await self.send_osc(
-            "/live/track/set/mute", [track_index, 1 if mute else 0]
-        )
+        return await self.send_osc("/live/track/set/mute", [track_index, 1 if mute else 0])
 
     async def set_track_solo(self, track_index: int, solo: bool) -> dict:
         """
@@ -903,13 +834,9 @@ class AbletonClient:
         :param track_index: The index of the track.
         :param solo: True to solo, False to unsolo.
         """
-        return await self.send_osc(
-            "/live/track/set/solo", [track_index, 1 if solo else 0]
-        )
+        return await self.send_osc("/live/track/set/solo", [track_index, 1 if solo else 0])
 
-    async def _get_tracks_fallback(
-        self, index_min: int, index_max: int, properties: List[str]
-    ) -> dict:
+    async def _get_tracks_fallback(self, index_min: int, index_max: int, properties: list[str]) -> dict:
         """Individual request fallback for bulk track properties using OSC bundles."""
         num_tracks = index_max - index_min
         results = [{"track_index": index_min + i} for i in range(num_tracks)]
@@ -920,17 +847,13 @@ class AbletonClient:
         for prop in properties:
             for i in range(num_tracks):
                 t_idx = index_min + i
-                bundle_messages.append(
-                    {"address": f"/live/track/get/{prop}", "args": [t_idx]}
-                )
+                bundle_messages.append({"address": f"/live/track/get/{prop}", "args": [t_idx]})
                 message_info.append((i, prop))
 
         if not bundle_messages:
             return {"ok": True, "data": results}
 
-        log_debug(
-            f"Fetching {len(bundle_messages)} track properties via OSC bundles..."
-        )
+        log_debug(f"Fetching {len(bundle_messages)} track properties via OSC bundles...")
         # Split into smaller bundles to avoid MTU issues
         chunk_size = 32
         for j in range(0, len(bundle_messages), chunk_size):
@@ -960,19 +883,12 @@ class AbletonClient:
             log_error(f"STEMS_SOURCE_DIR does not exist: {src_dir}")
             return False
 
-        audio_files = [
-            os.path.join(src_dir, f)
-            for f in os.listdir(src_dir)
-            if f.lower().endswith(ext)
-        ]
+        audio_files = [os.path.join(src_dir, f) for f in os.listdir(src_dir) if f.lower().endswith(ext)]
         if audio_files:
             log_debug(
                 f"Starting parallel analysis (summary_only={summary_only}) of {len(audio_files)} stems from {src_dir}..."
             )
-            analysis_tasks = [
-                asyncio.to_thread(process_audio_file, f, "", summary_only)
-                for f in audio_files
-            ]
+            analysis_tasks = [asyncio.to_thread(process_audio_file, f, "", summary_only) for f in audio_files]
             await asyncio.gather(*analysis_tasks)
             log_debug("Parallel analysis finished.")
         else:
@@ -989,7 +905,7 @@ class AbletonClient:
                 return song_resp
 
             num_tracks = song_resp["data"].get("num_tracks", 0)
-            tracks_list: List[Dict[str, Any]] = []
+            tracks_list: list[dict[str, Any]] = []
             project_data = {
                 "project": {
                     "tempo": song_resp["data"].get("tempo"),
@@ -1028,9 +944,7 @@ class AbletonClient:
 
             tracks_data = tracks_bulk_resp["data"]
 
-            device_tasks = [
-                self.get_track_devices(t["track_index"]) for t in tracks_data
-            ]
+            device_tasks = [self.get_track_devices(t["track_index"]) for t in tracks_data]
             device_responses = await asyncio.gather(*device_tasks)
 
             track_to_devices = {}
@@ -1054,17 +968,11 @@ class AbletonClient:
                     class_name = device.get("class_name")
                     name = device.get("name")
                     is_rel = class_name in rel_classes or (
-                        name
-                        and any(
-                            rn == name or f" {rn}" in name or f"{rn} " in name
-                            for rn in rel_names
-                        )
+                        name and any(rn == name or f" {rn}" in name or f"{rn} " in name for rn in rel_names)
                     )
 
                     if is_rel:
-                        param_tasks.append(
-                            self.get_device_parameters(t_idx, device["device_index"])
-                        )
+                        param_tasks.append(self.get_device_parameters(t_idx, device["device_index"]))
                         param_task_info.append((t_idx, device["device_index"]))
 
                 tracks_list.append(track_data)
@@ -1073,7 +981,7 @@ class AbletonClient:
                 param_responses = await asyncio.gather(*param_tasks)
                 track_lookup = {t["track_index"]: t for t in tracks_list}
 
-                for p_resp, (t_idx, d_idx) in zip(param_responses, param_task_info):
+                for p_resp, (t_idx, d_idx) in zip(param_responses, param_task_info, strict=False):
                     if p_resp["ok"]:
                         track = track_lookup.get(t_idx)
                         if track:
@@ -1129,9 +1037,7 @@ class AbletonClient:
             return {"ok": True, "description": "Full stem analysis finished."}
         finally:
             duration = time.time() - start_time
-            log_info(
-                f"Full stem analysis finished. Duration: {self._format_duration(duration)}"
-            )
+            log_info(f"Full stem analysis finished. Duration: {self._format_duration(duration)}")
 
     async def summarize_stems(self) -> dict:
         """
@@ -1145,9 +1051,7 @@ class AbletonClient:
             return {"ok": True, "description": "Stem summary finished."}
         finally:
             duration = time.time() - start_time
-            log_info(
-                f"Stem summary finished. Duration: {self._format_duration(duration)}"
-            )
+            log_info(f"Stem summary finished. Duration: {self._format_duration(duration)}")
 
     async def extract_ableton_project_data(self) -> dict:
         """
@@ -1160,11 +1064,9 @@ class AbletonClient:
             return await self._extract_project_data_internal()
         finally:
             duration = time.time() - start_time
-            log_info(
-                f"Data extraction finished. Duration: {self._format_duration(duration)}"
-            )
+            log_info(f"Data extraction finished. Duration: {self._format_duration(duration)}")
 
-    async def get_available_stem_summaries(self) -> List[str]:
+    async def get_available_stem_summaries(self) -> list[str]:
         """
         Scans the summaries directory for available stem analysis JSON files.
         Returns a list of track names, including those with project-name prefixes.
@@ -1186,7 +1088,7 @@ class AbletonClient:
                     stems.append(name)
         return sorted(stems)
 
-    async def get_available_stem_spectrograms(self) -> List[str]:
+    async def get_available_stem_spectrograms(self) -> list[str]:
         """
         Scans the spectrograms directory for available spectrogram WebP files.
         Returns a list of track names, including those with project-name prefixes.
@@ -1205,10 +1107,26 @@ class AbletonClient:
         return sorted(spectrograms)
 
 
+def main():
+    """CLI entry point for ableton_client (used by pyproject.toml [project.scripts])."""
+    from daemon_manager import ensure_daemon, stop_daemon
+
+    daemon_process = ensure_daemon()
+    try:
+        client = AbletonClient()
+        if len(sys.argv) > 1:
+            asyncio.run(client.run_tool(sys.argv[1]))
+        else:
+            log_info("Usage: ableton-for-ai-cli <tool_name>")
+            log_info("Available tools:")
+            log_info("  analyze_stems                                  - Full audio analysis")
+            log_info("  extract_ableton_project_data                   - Project metadata extraction")
+            log_info("  analyze_stems_and_extract_ableton_project_data - Full pipeline")
+            log_info("  get_overview                                   - Session overview")
+            log_info("  get_track                                      - Single track details")
+    finally:
+        stop_daemon(daemon_process)
+
+
 if __name__ == "__main__":
-    client = AbletonClient()
-    if len(sys.argv) > 1:
-        asyncio.run(client.run_tool(sys.argv[1]))
-    else:
-        log_info("AbletonClient CLI usage: uv run ableton_client.py <tool_name>")
-        log_info("Example: uv run ableton_client.py extract_ableton_project_data")
+    main()
