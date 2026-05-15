@@ -133,7 +133,7 @@ You can customize the server behavior by setting environment variables or editin
 | Variable                  | Default Value                   | Description                                             |
 |:--------------------------|:--------------------------------|:--------------------------------------------------------|
 | `LOG_LEVEL`               | `"INFO"`                        | Logging verbosity (`INFO` or `DEBUG`).                  |
-| `BASE_OUT_DIR`            | `"out"`                         | Directory for project data and analysis results.       |
+| `BASE_OUT_DIR`            | _auto_                          | Where analysis output is stored. Defaults to `{STEMS_SOURCE_DIR}/ableton-for-ai-out` if stems dir is set, else `~/.ableton-for-ai/out`. Override with an absolute path. |
 | `STEMS_SOURCE_DIR`        | `"./stems"`                     | Path where exported stems are located.                  |
 | `PREFERRED_AUDIO_FORMAT`  | `"mp3"`                         | Audio format to analyze (`mp3` or `wav`).               |
 | `SPECTROGRAM_QUALITY`     | `90`                            | Quality of WebP spectrograms (1-100).                   |

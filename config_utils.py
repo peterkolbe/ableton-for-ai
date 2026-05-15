@@ -10,7 +10,6 @@ from config import (
     DEFAULT_ABLETON_OSC_RECEIVE_PORT,
     DEFAULT_ABLETON_OSC_SEND_PORT,
     DEFAULT_ANALYSIS_FRAME_DURATION_MS,
-    DEFAULT_BASE_OUT_DIR,
     DEFAULT_DAEMON_HOST,
     DEFAULT_DAEMON_PORT,
     DEFAULT_LOG_LEVEL,
@@ -60,7 +59,7 @@ class Configuration:
         self._ableton_osc_send_port = int(os.getenv("ABLETON_OSC_SEND_PORT", DEFAULT_ABLETON_OSC_SEND_PORT))
         self._ableton_osc_receive_port = int(os.getenv("ABLETON_OSC_RECEIVE_PORT", DEFAULT_ABLETON_OSC_RECEIVE_PORT))
         self._log_level = os.getenv("LOG_LEVEL", DEFAULT_LOG_LEVEL).upper()
-        self._base_out_dir = os.getenv("BASE_OUT_DIR", DEFAULT_BASE_OUT_DIR)
+        self._base_out_dir = self._resolve_base_out_dir()
         self._stems_source_dir = os.getenv("STEMS_SOURCE_DIR", DEFAULT_STEMS_SOURCE_DIR)
         self._project_json_filename = sanitize_filename(
             os.getenv(
@@ -91,6 +90,33 @@ class Configuration:
         )
 
         self._validate()
+
+    @staticmethod
+    def _resolve_base_out_dir() -> str:
+        """
+        Resolve BASE_OUT_DIR to a writable absolute path.
+
+        Priority:
+        1. Explicit BASE_OUT_DIR env var (used as-is, absolutized).
+        2. If STEMS_SOURCE_DIR is set and exists → '{STEMS_SOURCE_DIR}/ableton-for-ai-out'
+           (keeps inputs and outputs together for the user).
+        3. Fallback: '~/.ableton-for-ai/out' (always writable, user-owned).
+
+        This avoids the trap of using the relative DEFAULT_BASE_OUT_DIR ('out')
+        when CWD is not writable (e.g. when launched via `uvx` from Claude Desktop,
+        which runs in CWD '/').
+        """
+        explicit = os.getenv("BASE_OUT_DIR")
+        if explicit:
+            return os.path.abspath(os.path.expanduser(explicit))
+
+        stems = os.getenv("STEMS_SOURCE_DIR")
+        if stems:
+            stems_abs = os.path.abspath(os.path.expanduser(stems))
+            if os.path.isdir(stems_abs):
+                return os.path.join(stems_abs, "ableton-for-ai-out")
+
+        return os.path.abspath(os.path.expanduser("~/.ableton-for-ai/out"))
 
     def _validate(self):
         """Internal validation of settings."""
