@@ -28,7 +28,7 @@ class AbletonOSCDaemon:
         self.receive_port = receive_port or config.ABLETON_OSC_RECEIVE_PORT
 
         # Initialize OSC client for Ableton
-        self.osc_client = SimpleUDPClient(ableton_host, ableton_port)
+        self.osc_client = SimpleUDPClient(self.ableton_host, self.ableton_port)
 
         # OSC Server instance (initialized in start)
         self.osc_server = None
