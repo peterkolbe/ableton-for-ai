@@ -39,6 +39,7 @@ Issues = "https://github.com/peterkolbe/ableton-for-ai/issues"
 [project.scripts]
 ableton-for-ai = "mcp_server_ableton:main"
 ableton-for-ai-cli = "ableton_client:main"
+ableton-for-ai-daemon = "osc_daemon:main"
 
 [build-system]
 requires = ["hatchling"]
