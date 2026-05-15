@@ -2,6 +2,7 @@ import asyncio
 import errno
 import json
 import sys
+from importlib.metadata import PackageNotFoundError, version
 
 from pythonosc.dispatcher import Dispatcher
 from pythonosc.osc_bundle_builder import OscBundleBuilder
@@ -10,6 +11,17 @@ from pythonosc.osc_server import AsyncIOOSCUDPServer
 from pythonosc.udp_client import SimpleUDPClient
 
 import config_utils as config
+
+
+def _get_package_version() -> str:
+    """Return the installed package version, or 'unknown' if not installed."""
+    try:
+        return version("ableton-for-ai")
+    except PackageNotFoundError:
+        return "dev"
+
+
+DAEMON_VERSION = _get_package_version()
 
 
 class AbletonOSCDaemon:
@@ -404,6 +416,7 @@ class AbletonOSCDaemon:
             elif command == "get_status":
                 result = {
                     "status": "ok",
+                    "version": DAEMON_VERSION,
                     "ableton_port": self.ableton_port,
                     "receive_port": self.receive_port,
                 }
